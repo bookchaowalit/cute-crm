@@ -44,13 +44,6 @@ jobs:
           $size = (Get-Item ./publish/${{ env.OUTPUT_NAME }}.exe).Length / 1MB
           Write-Output "File size: $([math]::Round($size, 2)) MB"
 
-      - name: Upload artifact (every push)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ExpressETL-exe
-          path: ./publish/${{ env.OUTPUT_NAME }}.exe
-          retention-days: 7
-
       - name: Create Release (on tag only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
