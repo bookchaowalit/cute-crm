@@ -72,7 +72,37 @@ public partial class SettingsForm : Form
 
         // Fields
         txtDbfPath = new TextBox { Text = _config.DbfPath };
-        AddField("DBF Path:", txtDbfPath);
+        // Wrap in panel with browse button
+        var dbfPanel = new Panel { Location = new Point(fieldX, y), Size = new Size(fieldWidth + 40, 28) };
+        txtDbfPath.Location = new Point(0, 0);
+        txtDbfPath.Size = new Size(fieldWidth - 35, 28);
+        txtDbfPath.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        var btnBrowse = new Button { Text = "...", Location = new Point(fieldWidth - 32, 0), Size = new Size(30, 28) };
+        btnBrowse.Click += (s, e) =>
+        {
+            using var fbd = new FolderBrowserDialog
+            {
+                Description = "เลือกโฟลเดอร์ที่เก็บไฟล์ .DBF",
+                SelectedPath = txtDbfPath.Text,
+                UseDescriptionForTitle = true
+            };
+            if (fbd.ShowDialog(this) == DialogResult.OK)
+                txtDbfPath.Text = fbd.SelectedPath;
+        };
+        dbfPanel.Controls.Add(txtDbfPath);
+        dbfPanel.Controls.Add(btnBrowse);
+
+        var lblDbf = new Label
+        {
+            Text = "DBF Path:",
+            Location = new Point(leftMargin, y + 8),
+            Size = new Size(labelWidth, 20),
+            TextAlign = ContentAlignment.MiddleRight,
+            AutoSize = false
+        };
+        this.Controls.Add(lblDbf);
+        this.Controls.Add(dbfPanel);
+        y += rowHeight;
 
         txtPgHost = new TextBox { Text = _config.PgHost };
         AddField("PG Host:", txtPgHost);
