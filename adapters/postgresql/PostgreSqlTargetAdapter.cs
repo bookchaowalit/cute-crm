@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using AccountingETL.Core.Domain;
 using AccountingETL.Core.Exceptions;
 using AccountingETL.Core.Ports;
@@ -29,6 +30,8 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
         EntityType.GlTransaction,
     };
 
+    public bool SupportsAutoDiscovery => true;
+
     public PostgreSqlTargetAdapter(string connectionString, string schema = "etl_staging")
     {
         _connectionString = connectionString;
@@ -48,6 +51,76 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
             return false;
         }
     }
+
+    // ===== Auto-Discovery Mode =====
+
+    public async Task EnsureTableAsync(SourceTableInfo tableInfo, CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+
+        var columns = string.Join(",\n    ", tableInfo.Fields.Select(f =>
+            $"\"{f.Name}\" {f.PgType}"));
+
+        var sql = $"""
+            CREATE TABLE IF NOT EXISTS "{_schema}"."{tableInfo.TableName}" (
+                {columns}
+            );
+            """;
+
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<int> InsertAllAsync(string tableName, IEnumerable<Record> records, CancellationToken ct = default)
+    {
+        var recordsList = records.ToList();
+        if (recordsList.Count == 0) return 0;
+
+        // Get field names from first record
+        var fields = recordsList[0].Keys.ToArray();
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+
+        await using var writer = conn.BeginBinaryImport(
+            $"COPY \"{_schema}\".\"{tableName}\" ({string.Join(",", fields.Select(f => $"\"{f}\""))}) FROM STDIN (FORMAT BINARY)");
+
+        foreach (var record in recordsList)
+        {
+            await writer.StartRowAsync(ct);
+            foreach (var field in fields)
+            {
+                var val = record.TryGetValue(field, out var v) ? v : null;
+                await writer.WriteAsync(val, ct);
+            }
+        }
+
+        await writer.CompleteAsync(ct);
+        return recordsList.Count;
+    }
+
+    public async Task<ISet<string>> GetTableNamesAsync(CancellationToken ct = default)
+    {
+        var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+
+        var sql = $"SELECT table_name FROM information_schema.tables WHERE table_schema = @schema";
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("schema", _schema);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            tables.Add(reader.GetString(0));
+        }
+
+        return tables;
+    }
+
+    // ===== Canonical Mode =====
 
     public async Task EnsureSchemaAsync(CancellationToken ct = default)
     {

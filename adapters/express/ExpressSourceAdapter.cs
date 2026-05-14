@@ -6,7 +6,11 @@ using AccountingETL.Core.Ports;
 namespace AccountingETL.Adapters.Express;
 
 /// <summary>
-/// Source adapter for Express Accounting — reads DBF files and maps them to canonical records.
+/// Source adapter for Express Accounting — reads DBF files.
+/// 
+/// Supports two modes:
+/// 1. **Canonical mode** — maps known DBF files to EntityType (Customer, Supplier, etc.)
+/// 2. **Auto-discovery mode** — scans the folder for all .DBF files and discovers tables dynamically
 /// </summary>
 public class ExpressSourceAdapter : ISourceAdapter
 {
@@ -27,7 +31,9 @@ public class ExpressSourceAdapter : ISourceAdapter
         EntityType.GlTransaction,
     };
 
-    // Express DBF file name patterns
+    public bool SupportsAutoDiscovery => true;
+
+    // Express DBF file name patterns (canonical mode)
     private static readonly Dictionary<EntityType, (string primary, string[] alternatives)> _filePatterns = new()
     {
         [EntityType.Customer] = ("ARMAS.DBF", new[] { "AR_MAS.DBF", "CUSTMAS.DBF", "CUSTOMER.DBF" }),
@@ -50,6 +56,25 @@ public class ExpressSourceAdapter : ISourceAdapter
         [EntityType.ApInvoice] = new[] { "AP_TRND.DBF", "APINVD.DBF", "AP_INVD.DBF" },
     };
 
+    // Known Express table descriptions for auto-discovery display names
+    private static readonly Dictionary<string, string> _knownTableDescriptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ARMAS"] = "AR Master (Customers)",
+        ["APMAS"] = "AP Master (Suppliers)",
+        ["ICMAS"] = "Item Master (Products)",
+        ["ARTRN"] = "AR Transactions (Sales Invoices)",
+        ["ARTRND"] = "AR Transaction Details",
+        ["APTRN"] = "AP Transactions (Purchase Invoices)",
+        ["APTRND"] = "AP Transaction Details",
+        ["GLTRANS"] = "GL Transactions",
+        ["BKMAs"] = "Bank Master",
+        ["BKTRN"] = "Bank Transactions",
+        ["ISTAB"] = "Item Stock Table",
+        ["ISTAX"] = "Item Tax Table",
+        ["ISVAT"] = "VAT Table",
+        ["OESO"] = "Opening Stock",
+    };
+
     public ExpressSourceAdapter(string dbfPath, string encodingName = "tis-620")
     {
         _dbfPath = dbfPath;
@@ -61,19 +86,17 @@ public class ExpressSourceAdapter : ISourceAdapter
         return Task.FromResult(Directory.Exists(_dbfPath));
     }
 
+    // ===== Canonical Mode =====
+
     public async IAsyncEnumerable<Record> ReadAsync(EntityType entity, DateTimeOffset? cutoff, CancellationToken ct = default)
     {
-        // Express doesn't support incremental reads at DBF level — reads all
         var dbfReader = new DbfReader(_encodingName);
 
         if (entity == EntityType.ArInvoiceLine)
         {
-            // Read detail lines for AR invoices
             var detailPath = FindDbfFile(EntityType.ArInvoice, isDetail: true);
             if (detailPath == null) yield break;
-
-            var rawRecords = dbfReader.Read(detailPath);
-            foreach (var r in rawRecords)
+            foreach (var r in dbfReader.Read(detailPath))
             {
                 ct.ThrowIfCancellationRequested();
                 yield return r;
@@ -85,9 +108,7 @@ public class ExpressSourceAdapter : ISourceAdapter
         {
             var detailPath = FindDbfFile(EntityType.ApInvoice, isDetail: true);
             if (detailPath == null) yield break;
-
-            var rawRecords = dbfReader.Read(detailPath);
-            foreach (var r in rawRecords)
+            foreach (var r in dbfReader.Read(detailPath))
             {
                 ct.ThrowIfCancellationRequested();
                 yield return r;
@@ -98,6 +119,69 @@ public class ExpressSourceAdapter : ISourceAdapter
         var filePath = FindDbfFile(entity);
         if (filePath == null) yield break;
 
+        foreach (var r in dbfReader.Read(filePath))
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return r;
+        }
+    }
+
+    // ===== Auto-Discovery Mode =====
+
+    public async Task<IReadOnlyList<SourceTableInfo>> DiscoverTablesAsync(CancellationToken ct = default)
+    {
+        var tables = new List<SourceTableInfo>();
+        var dbfReader = new DbfReader(_encodingName);
+
+        if (!Directory.Exists(_dbfPath))
+            return tables;
+
+        var dbfFiles = Directory.GetFiles(_dbfPath, "*.DBF", SearchOption.TopDirectoryOnly);
+
+        foreach (var filePath in dbfFiles.OrderBy(f => f))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                var info = dbfReader.GetTableInfo(filePath);
+                if (info == null) continue;
+
+                var tableName = Path.GetFileNameWithoutExtension(filePath).ToUpperInvariant();
+                var displayName = _knownTableDescriptions.TryGetValue(tableName, out var desc)
+                    ? $"{tableName} — {desc}"
+                    : tableName;
+
+                tables.Add(new SourceTableInfo(
+                    TableName: tableName,
+                    DisplayName: displayName,
+                    Fields: info.Fields,
+                    RecordCount: info.RecordCount,
+                    SourcePath: filePath));
+            }
+            catch
+            {
+                // Skip files that can't be parsed
+            }
+        }
+
+        return tables;
+    }
+
+    public async IAsyncEnumerable<Record> ReadTableAsync(string tableName, CancellationToken ct = default)
+    {
+        var dbfReader = new DbfReader(_encodingName);
+
+        // Try exact match first, then case-insensitive
+        var filePath = Path.Combine(_dbfPath, $"{tableName}.DBF");
+        if (!File.Exists(filePath))
+        {
+            var files = Directory.GetFiles(_dbfPath, "*.DBF");
+            filePath = files.FirstOrDefault(f =>
+                string.Equals(Path.GetFileNameWithoutExtension(f), tableName, StringComparison.OrdinalIgnoreCase));
+            if (filePath == null) yield break;
+        }
+
         var records = dbfReader.Read(filePath);
         foreach (var r in records)
         {
@@ -105,6 +189,8 @@ public class ExpressSourceAdapter : ISourceAdapter
             yield return r;
         }
     }
+
+    // ===== Helpers =====
 
     private string? FindDbfFile(EntityType entity, bool isDetail = false)
     {

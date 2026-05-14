@@ -5,7 +5,12 @@ namespace AccountingETL.Core.Pipeline;
 
 /// <summary>
 /// Default ETL pipeline implementation — coordinates source → transform → target.
-/// This is the orchestrator that lives in Core and depends only on interfaces.
+/// 
+/// Supports two modes:
+/// 1. **Canonical mode** — uses SupportedEntities + ReadAsync + field mapping (best when schema is known)
+/// 2. **Auto-discovery mode** — uses DiscoverTables + ReadTableAsync (best for unknown/legacy data)
+/// 
+/// The pipeline automatically picks the best mode based on what the adapters support.
 /// </summary>
 public class EtlPipeline : IEtlPipeline
 {
@@ -17,9 +22,25 @@ public class EtlPipeline : IEtlPipeline
 
     public event Action<string>? Log;
 
+    /// <summary>
+    /// Entities synced in canonical mode (empty if running in auto-discovery mode).
+    /// </summary>
     public IReadOnlyList<EntityType> SyncedEntities => _source.SupportedEntities
         .Intersect(_target.SupportedEntities)
         .ToList();
+
+    /// <summary>
+    /// Tables synced in auto-discovery mode (empty if running in canonical mode).
+    /// </summary>
+    public IReadOnlyList<SourceTableInfo> DiscoveredTables { get; private set; }
+        = Array.Empty<SourceTableInfo>();
+
+    /// <summary>
+    /// True if the pipeline is running in auto-discovery mode.
+    /// </summary>
+    public bool IsAutoDiscoveryMode => !SyncedEntities.Any()
+        && _source.SupportsAutoDiscovery
+        && _target.SupportsAutoDiscovery;
 
     public EtlPipeline(
         ISourceAdapter source,
@@ -38,8 +59,28 @@ public class EtlPipeline : IEtlPipeline
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         LogMessage($"Initializing {_target.TargetName}...");
-        await _target.EnsureSchemaAsync(ct);
-        LogMessage($"{_target.TargetName} ready.");
+
+        if (IsAutoDiscoveryMode)
+        {
+            // Auto-discovery mode: discover tables first
+            LogMessage($"Discovering tables from {_source.SourceName}...");
+            DiscoveredTables = await _source.DiscoverTablesAsync(ct);
+            LogMessage($"Found {DiscoveredTables.Count} tables: {string.Join(", ", DiscoveredTables.Select(t => t.TableName))}");
+
+            // Create tables in target
+            foreach (var table in DiscoveredTables)
+            {
+                await _target.EnsureTableAsync(table, ct);
+                LogMessage($"  Created table: {table.TableName} ({table.Fields.Count} fields, {table.RecordCount} records)");
+            }
+        }
+        else
+        {
+            // Canonical mode: use predefined schema
+            await _target.EnsureSchemaAsync(ct);
+        }
+
+        LogMessage($"{_target.TargetName} ready. Mode: {(IsAutoDiscoveryMode ? "Auto-Discovery" : "Canonical")}");
     }
 
     public async Task<IReadOnlyList<SyncResult>> RunAsync(
@@ -52,26 +93,19 @@ public class EtlPipeline : IEtlPipeline
 
         LogMessage("====== ETL เริ่มทำงาน ======");
 
-        var entitiesToSync = entity.HasValue
-            ? new[] { entity.Value }
-            : SyncedEntities;
-
         var results = new List<SyncResult>();
 
         try
         {
-            foreach (var entityType in entitiesToSync)
+            if (IsAutoDiscoveryMode)
             {
-                ct.ThrowIfCancellationRequested();
-
-                var result = await SyncEntityAsync(entityType, syncStartTime, progress, ct);
-                results.Add(result);
-
-                // Also sync to secondary target if configured (e.g., ERPNext for master data)
-                if (_secondaryTarget != null && IsMasterData(entityType))
-                {
-                    await SyncToSecondaryTargetAsync(entityType, ct);
-                }
+                var autoResults = await RunAutoDiscoveryAsync(syncStartTime, progress, ct);
+                results.AddRange(autoResults);
+            }
+            else
+            {
+                var canonicalResults = await RunCanonicalAsync(entity, syncStartTime, progress, ct);
+                results.AddRange(canonicalResults);
             }
 
             // Update config
@@ -90,12 +124,58 @@ public class EtlPipeline : IEtlPipeline
 
             await NotifyFailureAsync(ex.Message);
 
-            // Add failed result
-            if (entity.HasValue && !results.Any(r => r.Entity == entity.Value))
+            if (!results.Any())
             {
                 results.Add(new SyncResult(
-                    entity.Value, SyncCounts.Zero, sw.Elapsed, "failed", ex.Message));
+                    entity ?? EntityType.Customer, SyncCounts.Zero, sw.Elapsed, "failed", ex.Message));
             }
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<SyncResult>> RunCanonicalAsync(
+        EntityType? entity,
+        DateTimeOffset syncStartTime,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        var entitiesToSync = entity.HasValue
+            ? new[] { entity.Value }
+            : SyncedEntities;
+
+        var results = new List<SyncResult>();
+
+        foreach (var entityType in entitiesToSync)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var result = await SyncEntityAsync(entityType, syncStartTime, progress, ct);
+            results.Add(result);
+
+            // Also sync to secondary target if configured (e.g., ERPNext for master data)
+            if (_secondaryTarget != null && IsMasterData(entityType))
+            {
+                await SyncToSecondaryTargetAsync(entityType, ct);
+            }
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<SyncResult>> RunAutoDiscoveryAsync(
+        DateTimeOffset syncStartTime,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        var results = new List<SyncResult>();
+
+        foreach (var table in DiscoveredTables)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var result = await SyncTableAsync(table, syncStartTime, progress, ct);
+            results.Add(result);
         }
 
         return results;
@@ -165,6 +245,65 @@ public class EtlPipeline : IEtlPipeline
         }
     }
 
+    private async Task<SyncResult> SyncTableAsync(
+        SourceTableInfo table,
+        DateTimeOffset syncStartTime,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            LogMessage($"Reading {table.TableName} from {_source.SourceName}...");
+            var records = new List<Record>();
+            await foreach (var record in _source.ReadTableAsync(table.TableName, ct))
+            {
+                records.Add(record);
+            }
+
+            if (records.Count == 0)
+            {
+                LogMessage($"  {table.TableName}: ไม่มีข้อมูล — ข้าม");
+                sw.Stop();
+                return new SyncResult(EntityType.Customer, SyncCounts.Zero, sw.Elapsed, "success");
+            }
+
+            LogMessage($"  {table.TableName}: อ่านได้ {records.Count} รายการ");
+
+            var inserted = await _target.InsertAllAsync(table.TableName, records, ct);
+
+            sw.Stop();
+
+            var status = inserted > 0 ? "success" : "skipped";
+            var counts = new SyncCounts(inserted, 0, 0);
+            var syncLog = new SyncLog(
+                SyncTime: syncStartTime,
+                Entity: EntityType.Customer,
+                Inserted: inserted,
+                Updated: 0,
+                Skipped: 0,
+                Duration: sw.Elapsed,
+                Status: status);
+
+            await _target.WriteSyncLogAsync(syncLog, ct);
+
+            var msg = $"✓ {table.TableName}: +{inserted} ⏱{sw.ElapsedMilliseconds}ms";
+            LogMessage(msg);
+            progress?.Report(msg);
+
+            return new SyncResult(EntityType.Customer, counts, sw.Elapsed, status);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            var msg = $"✗ {table.TableName}: {ex.Message}";
+            LogMessage(msg);
+
+            return new SyncResult(EntityType.Customer, SyncCounts.Zero, sw.Elapsed, "failed", ex.Message);
+        }
+    }
+
     private async Task SyncToSecondaryTargetAsync(EntityType entity, CancellationToken ct)
     {
         if (_secondaryTarget == null) return;
@@ -174,9 +313,6 @@ public class EtlPipeline : IEtlPipeline
             LogMessage($"Syncing {entity} to {_secondaryTarget.TargetName}...");
             var keyField = EntitySchema.GetKeyField(entity);
 
-            // Read from primary target to get canonical records
-            // For ERPNext, this is typically done by reading from the staging DB
-            // Since we don't have a direct way to read from the target, we re-read from source
             var records = new List<Record>();
             await foreach (var record in _source.ReadAsync(entity, null, ct))
             {
@@ -206,9 +342,10 @@ public class EtlPipeline : IEtlPipeline
 
     private async Task NotifySuccessAsync(IReadOnlyList<SyncResult> results, long elapsedMs)
     {
-        // This is a notification concern — could be injected as a separate port
-        // For now, we just log — the UI layer can handle LINE Notify
-        var summary = string.Join(" | ", results.Select(r => $"{r.Entity}: +{r.Counts.Inserted} ~{r.Counts.Updated}"));
+        var summary = string.Join(" | ", results.Select(r =>
+            r.Entity == EntityType.Customer && DiscoveredTables.Any()
+                ? $"{DiscoveredTables.Count} tables synced"
+                : $"{r.Entity}: +{r.Counts.Inserted} ~{r.Counts.Updated}"));
         LogMessage($"Summary: {summary} | Total: {elapsedMs}ms");
     }
 

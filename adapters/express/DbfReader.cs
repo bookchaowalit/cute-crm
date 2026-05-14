@@ -58,7 +58,7 @@ public class DbfReader
             fs.Seek(pos, SeekOrigin.Begin);
             byte[] nameBytes = br.ReadBytes(11);
             string fieldName = _encoding.GetString(nameBytes).TrimEnd('\0').Trim();
-            br.ReadByte(); // field type
+            byte fieldType = br.ReadByte();
 
             int fieldOffsetVal = br.ReadInt32();
             byte fieldLength = br.ReadByte();
@@ -92,6 +92,72 @@ public class DbfReader
 
         return results;
     }
+
+    /// <summary>
+    /// Read only the header info from a DBF file (fast — doesn't read records).
+    /// Used for auto-discovery.
+    /// </summary>
+    public TableInfo? GetTableInfo(string filePath)
+    {
+        if (!File.Exists(filePath)) return null;
+
+        try
+        {
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var br = new BinaryReader(fs);
+
+            fs.Seek(0, SeekOrigin.Begin);
+            br.ReadByte(); // version
+            br.ReadByte(); // year
+            br.ReadByte(); // month
+            br.ReadByte(); // day
+            int recordCount = br.ReadInt32();
+            short headerSize = br.ReadInt16();
+            short recordSize = br.ReadInt16();
+
+            var fields = new List<SourceFieldInfo>();
+            int fieldOffset = 1;
+            int pos = 32;
+
+            while (true)
+            {
+                fs.Seek(pos, SeekOrigin.Begin);
+                byte term = br.ReadByte();
+                if (term == 0x0D) break;
+
+                fs.Seek(pos, SeekOrigin.Begin);
+                byte[] nameBytes = br.ReadBytes(11);
+                string fieldName = _encoding.GetString(nameBytes).TrimEnd('\0').Trim();
+                byte fieldType = br.ReadByte();
+
+                br.ReadInt32(); // offset
+                byte fieldLength = br.ReadByte();
+                byte decimalCount = br.ReadByte();
+
+                fields.Add(new SourceFieldInfo(
+                    Name: fieldName,
+                    DbType: ((char)fieldType).ToString(),
+                    Length: fieldLength,
+                    Decimals: decimalCount));
+
+                fieldOffset += fieldLength;
+                pos += 32;
+            }
+
+            return new TableInfo(
+                Fields: fields,
+                RecordCount: recordCount);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Header-only info from a DBF file.
+    /// </summary>
+    public record TableInfo(IReadOnlyList<SourceFieldInfo> Fields, int RecordCount);
 
     private static object? ParseValue(string val, int decimalCount)
     {

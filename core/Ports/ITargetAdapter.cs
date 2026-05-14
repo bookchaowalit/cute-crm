@@ -4,6 +4,10 @@ namespace AccountingETL.Core.Ports;
 
 /// <summary>
 /// Port for writing data to a target system (database, ERP, API, etc.)
+///
+/// Supports two modes:
+/// 1. **Canonical mode** — predefined schema with upsert by key field
+/// 2. **Auto-discovery mode** — dynamic table creation + bulk insert
 /// </summary>
 public interface ITargetAdapter
 {
@@ -14,8 +18,11 @@ public interface ITargetAdapter
 
     /// <summary>
     /// Returns all supported entity types for this target.
+    /// Empty list means this adapter does not support canonical mode.
     /// </summary>
     IReadOnlyList<EntityType> SupportedEntities { get; }
+
+    // ===== Mode 1: Canonical =====
 
     /// <summary>
     /// Ensure the target schema/tables exist. Called once at startup.
@@ -32,6 +39,34 @@ public interface ITargetAdapter
     /// Get distinct values of a key field from the target (for determining new vs existing).
     /// </summary>
     Task<ISet<string>> GetExistingKeysAsync(EntityType entity, string keyField, CancellationToken ct = default);
+
+    // ===== Mode 2: Auto-discovery =====
+
+    /// <summary>
+    /// Returns true if this adapter supports auto-discovery mode.
+    /// </summary>
+    bool SupportsAutoDiscovery => false;
+
+    /// <summary>
+    /// Create a table dynamically based on discovered table info.
+    /// </summary>
+    Task EnsureTableAsync(SourceTableInfo tableInfo, CancellationToken ct = default)
+        => throw new NotSupportedException($"Auto-discovery not supported by {TargetName}");
+
+    /// <summary>
+    /// Insert all records into a dynamically-created table.
+    /// Returns the number of inserted records.
+    /// </summary>
+    Task<int> InsertAllAsync(string tableName, IEnumerable<Record> records, CancellationToken ct = default)
+        => throw new NotSupportedException($"Table-level insert not supported by {TargetName}");
+
+    /// <summary>
+    /// Get distinct table names from the target.
+    /// </summary>
+    Task<ISet<string>> GetTableNamesAsync(CancellationToken ct = default)
+        => throw new NotSupportedException($"Table listing not supported by {TargetName}");
+
+    // ===== Common =====
 
     /// <summary>
     /// Write a sync log entry.
