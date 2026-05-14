@@ -395,10 +395,17 @@ public class EtlPipeline : IEtlPipeline
 
     private async Task NotifySuccessAsync(IReadOnlyList<SyncResult> results, long elapsedMs)
     {
-        var summary = string.Join(" | ", results.Select(r =>
-            r.Entity == EntityType.Customer && DiscoveredTables.Any()
-                ? $"{DiscoveredTables.Count} tables synced"
-                : $"{r.Entity}: +{r.Counts.Inserted} ~{r.Counts.Updated}"));
+        string summary;
+        if (IsAutoDiscoveryMode || DiscoveredTables.Any())
+        {
+            var totalInserted = results.Sum(r => r.Counts.Inserted);
+            var totalTables = DiscoveredTables.Any() ? DiscoveredTables.Count : results.Count;
+            summary = $"{totalTables} tables synced, {totalInserted} total records";
+        }
+        else
+        {
+            summary = string.Join(" | ", results.Select(r => $"{r.Entity}: +{r.Counts.Inserted} ~{r.Counts.Updated}"));
+        }
         LogMessage($"Summary: {summary} | Total: {elapsedMs}ms");
     }
 

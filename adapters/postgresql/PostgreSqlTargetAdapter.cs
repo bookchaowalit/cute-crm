@@ -172,18 +172,18 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
                 case "date":
                     if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
                         System.Globalization.DateTimeStyles.None, out DateTime d1))
-                        return d1;
+                        return DateTime.SpecifyKind(d1, DateTimeKind.Utc);
                     if (DateTime.TryParse(str, out DateTime d2))
-                        return d2;
+                        return DateTime.SpecifyKind(d2, DateTimeKind.Utc);
                     return DBNull.Value;
 
                 case "timestamp":
                 case "timestamptz":
                     if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
                         System.Globalization.DateTimeStyles.None, out DateTime dt1))
-                        return dt1;
+                        return DateTime.SpecifyKind(dt1, DateTimeKind.Utc);
                     if (DateTime.TryParse(str, out DateTime dt2))
-                        return dt2;
+                        return DateTime.SpecifyKind(dt2, DateTimeKind.Utc);
                     return DBNull.Value;
 
                 case "bool":
