@@ -62,6 +62,7 @@ public partial class MainForm : Form
 
     private void MinimizeToTray()
     {
+        if (trayIcon == null) return;
         Hide();
         trayIcon.Visible = true;
     }
@@ -567,7 +568,7 @@ public partial class MainForm : Form
     {
         base.OnResize(e);
         // Minimize to tray instead of taskbar
-        if (_config.MinimizeToTray && WindowState == FormWindowState.Minimized)
+        if (_config?.MinimizeToTray == true && WindowState == FormWindowState.Minimized)
         {
             MinimizeToTray();
         }
@@ -576,7 +577,7 @@ public partial class MainForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         // If minimize-to-tray is enabled and user clicks X, hide instead of close
-        if (_config.MinimizeToTray && e.CloseReason == CloseReason.UserClosing)
+        if (_config?.MinimizeToTray == true && e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
             MinimizeToTray();
