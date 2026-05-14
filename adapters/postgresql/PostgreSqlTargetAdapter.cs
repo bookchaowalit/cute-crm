@@ -99,10 +99,9 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
 
         if (columns.Count == 0) return 0;
 
-        // Build INSERT statement with explicit ::text casts to bypass Npgsql type inference
-        // This forces PostgreSQL to handle all type conversion, avoiding DateTimeOffset wrapping
+        // Build INSERT statement - all values sent as text, PostgreSQL handles type conversion
         var colNames = string.Join(", ", columns.Select(c => $"\"{c.Name}\""));
-        var paramNames = string.Join(", ", columns.Select((_, i) => $"@p{i}::text"));
+        var paramNames = string.Join(", ", columns.Select((_, i) => $"@p{i}"));
         var insertSql = $"INSERT INTO \"{_schema}\".\"{tableName}\" ({colNames}) VALUES ({paramNames})";
 
         int inserted = 0;
@@ -122,8 +121,10 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
                     val = rawVal.ToString()?.Replace("\0", "") ?? "";
                 }
 
-                // All values sent as text - PostgreSQL handles type conversion
-                cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
+                // Explicitly create parameter with Text type - prevents Npgsql from wrapping DateTime as DateTimeOffset
+                var param = new NpgsqlParameter($"@p{i}", NpgsqlTypes.NpgsqlDbType.Text);
+                param.Value = val ?? DBNull.Value;
+                cmd.Parameters.Add(param);
             }
 
             try
