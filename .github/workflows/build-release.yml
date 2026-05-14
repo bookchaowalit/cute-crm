@@ -25,8 +25,14 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore
-        run: dotnet restore
+      - name: Restore (non-Windows projects only)
+        run: |
+          dotnet restore core/AccountingETL.Core.csproj
+          dotnet restore adapters/express/AccountingETL.Adapters.Express.csproj
+          dotnet restore adapters/postgresql/AccountingETL.Adapters.PostgreSQL.csproj
+          dotnet restore adapters/erpnext/AccountingETL.Adapters.ErpNext.csproj
+          dotnet restore tests/AccountingETL.Core.Tests/AccountingETL.Core.Tests.csproj
+          dotnet restore tests/AccountingETL.Adapters.Express.Tests/AccountingETL.Adapters.Express.Tests.csproj
 
       - name: Build (all non-Windows projects)
         run: |
@@ -36,7 +42,7 @@ jobs:
           dotnet build adapters/erpnext/AccountingETL.Adapters.ErpNext.csproj
 
       - name: Run tests
-        run: dotnet test --no-build --verbosity normal
+        run: dotnet test tests/AccountingETL.Core.Tests/AccountingETL.Core.Tests.csproj --no-build --verbosity normal && dotnet test tests/AccountingETL.Adapters.Express.Tests/AccountingETL.Adapters.Express.Tests.csproj --no-build --verbosity normal
 
   # ============================================================
   # 2. Build Windows release
