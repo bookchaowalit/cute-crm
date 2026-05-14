@@ -114,14 +114,33 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
             {
                 var (colName, pgType) = columns[i];
                 object? val = DBNull.Value;
+                var npgsqlType = NpgsqlTypes.NpgsqlDbType.Text; // default
 
                 if (record.TryGetValue(colName, out var rawVal) && rawVal != null)
                 {
                     // Convert based on PostgreSQL column type
-                    val = ConvertValue(rawVal, pgType);
+                    var converted = ConvertValue(rawVal, pgType);
+                    val = converted;
+
+                    // Set explicit NpgsqlDbType to prevent DateTimeOffset wrapping
+                    if (pgType == "date")
+                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Date;
+                    else if (pgType == "timestamp")
+                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Timestamp;
+                    else if (pgType == "timestamptz")
+                        npgsqlType = NpgsqlTypes.NpgsqlDbType.TimestampTz;
+                    else if (pgType is "int2" or "int4" or "int8" or "bigint")
+                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Integer;
+                    else if (pgType is "numeric" or "decimal")
+                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Numeric;
+                    else if (pgType is "float4" or "float8")
+                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Double;
+                    else if (pgType is "bool" or "boolean")
+                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Boolean;
                 }
 
-                cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
+                var param = cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
+                param.NpgsqlDbType = npgsqlType;
             }
 
             try
