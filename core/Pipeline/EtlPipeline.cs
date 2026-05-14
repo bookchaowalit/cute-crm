@@ -109,17 +109,39 @@ public class EtlPipeline : IEtlPipeline
                     LogMessage("Canonical mode found 0 records — falling back to Auto-Discovery mode...");
 
                     // Discover tables and create them
-                    DiscoveredTables = await _source.DiscoverTablesAsync(ct);
-                    LogMessage($"Found {DiscoveredTables.Count} tables via auto-discovery.");
-
-                    foreach (var table in DiscoveredTables)
+                    try
                     {
-                        await _target.EnsureTableAsync(table, ct);
-                    }
+                        LogMessage("Step 1/3: Discovering tables...");
+                        DiscoveredTables = await _source.DiscoverTablesAsync(ct);
+                        LogMessage($"Found {DiscoveredTables.Count} tables via auto-discovery.");
 
-                    // Now sync via auto-discovery
-                    var autoResults = await RunAutoDiscoveryAsync(syncStartTime, progress, ct);
-                    results.AddRange(autoResults);
+                        LogMessage("Step 2/3: Creating tables in PostgreSQL...");
+                        int tablesCreated = 0;
+                        foreach (var table in DiscoveredTables)
+                        {
+                            try
+                            {
+                                await _target.EnsureTableAsync(table, ct);
+                                tablesCreated++;
+                            }
+                            catch (Exception ex)
+                            {
+                                LogMessage($"  ⚠ Failed to create table {table.TableName}: {ex.Message}");
+                            }
+                        }
+                        LogMessage($"Created {tablesCreated}/{DiscoveredTables.Count} tables.");
+
+                        LogMessage("Step 3/3: Syncing data...");
+                        // Now sync via auto-discovery
+                        var autoResults = await RunAutoDiscoveryAsync(syncStartTime, progress, ct);
+                        results.AddRange(autoResults);
+                    }
+                    catch (Exception fallbackEx)
+                    {
+                        LogMessage($"Auto-discovery failed: {fallbackEx.Message}");
+                        LogMessage($"Stack: {fallbackEx.StackTrace?.Split('\n').FirstOrDefault()}");
+                        throw;
+                    }
                 }
                 else
                 {
