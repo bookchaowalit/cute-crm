@@ -103,12 +103,13 @@ public partial class SettingsForm : Form
 
         // Fields
         txtDbfPath = new TextBox { Text = _config.DbfPath };
-        // Wrap in panel with browse button
-        var dbfPanel = new Panel { Location = new Point(fieldX, y), Size = new Size(fieldWidth + 40, 28) };
+        // Wrap in panel with browse + preview buttons
+        var dbfPanel = new Panel { Location = new Point(fieldX, y), Size = new Size(fieldWidth + 80, 28) };
         txtDbfPath.Location = new Point(0, 0);
-        txtDbfPath.Size = new Size(fieldWidth - 35, 28);
+        txtDbfPath.Size = new Size(fieldWidth - 75, 28);
         txtDbfPath.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        var btnBrowse = new Button { Text = "...", Location = new Point(fieldWidth - 32, 0), Size = new Size(30, 28) };
+
+        var btnBrowse = new Button { Text = "...", Location = new Point(fieldWidth - 72, 0), Size = new Size(30, 28) };
         btnBrowse.Click += (s, e) =>
         {
             using var fbd = new FolderBrowserDialog
@@ -122,6 +123,17 @@ public partial class SettingsForm : Form
         };
         dbfPanel.Controls.Add(txtDbfPath);
         dbfPanel.Controls.Add(btnBrowse);
+
+        var btnPreview = new Button
+        {
+            Text = "👁 Preview",
+            Location = new Point(fieldWidth - 38, 0),
+            Size = new Size(38, 28),
+            Font = new Font("Segoe UI", 8),
+            ForeColor = Color.FromArgb(0, 120, 215)
+        };
+        btnPreview.Click += (s, e) => ShowPreview();
+        dbfPanel.Controls.Add(btnPreview);
 
         var lblDbf = new Label
         {
@@ -507,6 +519,142 @@ public partial class SettingsForm : Form
     {
         ApplyConfig();
         _config.Save();
+    }
+
+    private void ShowPreview()
+    {
+        var path = txtDbfPath.Text.Trim();
+        if (!Directory.Exists(path))
+        {
+            MessageBox.Show("DBF Path ไม่ถูกต้อง", "Preview", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var dbfFiles = Directory.GetFiles(path, "*.DBF", SearchOption.TopDirectoryOnly)
+            .OrderBy(f => f)
+            .ToArray();
+
+        if (dbfFiles.Length == 0)
+        {
+            MessageBox.Show("ไม่พบไฟล์ .DBF ในโฟลเดอร์นี้", "Preview", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var previewDlg = new Form
+        {
+            Text = "Preview DBF Data",
+            Size = new Size(800, 600),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.Sizable
+        };
+
+        // Left: file list
+        var lstFiles = new ListBox
+        {
+            Dock = DockStyle.Left,
+            Width = 250,
+            Font = new Font("Consolas", 9)
+        };
+        previewDlg.Controls.Add(lstFiles);
+
+        foreach (var f in dbfFiles)
+        {
+            var fi = new FileInfo(f);
+            // Quick record count from header
+            int recCount = 0;
+            try
+            {
+                using var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var br = new BinaryReader(fs);
+                fs.Seek(4, SeekOrigin.Begin);
+                recCount = br.ReadInt32();
+            }
+            catch { }
+
+            var name = Path.GetFileNameWithoutExtension(f).ToUpperInvariant();
+            lstFiles.Items.Add($"{name.PadRight(12)} {recCount,8:N0} records");
+        }
+
+        // Right: data grid
+        var grid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            AllowUserToAddRows = false
+        };
+        previewDlg.Controls.Add(grid);
+
+        // Status bar
+        var lblInfo = new Label
+        {
+            Dock = DockStyle.Bottom,
+            Height = 28,
+            Padding = new Padding(8, 4, 0, 0),
+            BackColor = Color.FromArgb(240, 240, 240)
+        };
+        previewDlg.Controls.Add(lblInfo);
+
+        lstFiles.SelectedIndexChanged += (s, e) =>
+        {
+            if (lstFiles.SelectedIndex < 0) return;
+
+            var filePath = dbfFiles[lstFiles.SelectedIndex];
+            var fileName = Path.GetFileName(filePath).ToUpperInvariant();
+
+            try
+            {
+                var reader = new AccountingETL.Adapters.Express.DbfReader(_config.DbfEncoding);
+                var allRecords = reader.Read(filePath);
+                var sample = allRecords.Take(50).ToList();
+
+                if (sample.Count == 0)
+                {
+                    grid.Rows.Clear();
+                    grid.Columns.Clear();
+                    lblInfo.Text = $"📄 {fileName}: 0 records";
+                    return;
+                }
+
+                // Build columns from first record
+                grid.Columns.Clear();
+                var firstRow = sample[0];
+                foreach (string colName in firstRow.Keys)
+                {
+                    grid.Columns.Add(colName, colName);
+                }
+
+                // Add rows (max 50 for preview)
+                grid.Rows.Clear();
+                foreach (var record in sample)
+                {
+                    var row = new DataGridViewRow();
+                    row.CreateCells(grid);
+                    int i = 0;
+                    foreach (var kvp in record)
+                    {
+                        row.Cells[i].Value = kvp.Value?.ToString() ?? "";
+                        i++;
+                    }
+                    grid.Rows.Add(row);
+                }
+
+                lblInfo.Text = $"📄 {fileName}: {allRecords.Count:N0} records total — showing first {sample.Count}";
+            }
+            catch (Exception ex)
+            {
+                grid.Rows.Clear();
+                grid.Columns.Clear();
+                lblInfo.Text = $"⚠ Error reading {fileName}: {ex.Message}";
+            }
+        };
+
+        // Auto-select first file
+        if (lstFiles.Items.Count > 0)
+            lstFiles.SelectedIndex = 0;
+
+        previewDlg.ShowDialog(this);
     }
 
     private void ApplyConfig()
