@@ -9,6 +9,9 @@
     <ApplicationIcon></ApplicationIcon>
     <AssemblyName>AccountingETL</AssemblyName>
     <RootNamespace>AccountingETL.App</RootNamespace>
+    <Version>2.2.5</Version>
+    <AssemblyVersion>2.2.5.0</AssemblyVersion>
+    <FileVersion>2.2.5.0</FileVersion>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
