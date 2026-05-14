@@ -23,6 +23,7 @@ public partial class MainForm : Form
     private Button btnSettings = null!;
     private Button btnRunNow = null!;
     private Button btnViewLog = null!;
+    private Button btnHistory = null!;
     private Button btnExit = null!;
     private ProgressBar progressBar = null!;
     private System.Windows.Forms.Timer schedulerTimer = null!;
@@ -30,8 +31,8 @@ public partial class MainForm : Form
     private void InitializeComponent()
     {
         this.Text = "Express → PostgreSQL ETL";
-        this.Size = new Size(520, 520);
-        this.MinimumSize = new Size(520, 520);
+        this.Size = new Size(540, 540);
+        this.MinimumSize = new Size(540, 540);
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
         this.StartPosition = FormStartPosition.CenterScreen;
@@ -116,8 +117,8 @@ public partial class MainForm : Form
         this.Controls.Add(txtLog);
         y += 190;
 
-        // Buttons
-        int btnWidth = 100;
+        // Buttons (row 1)
+        int btnWidth = 95;
         int btnY = y;
         int btnX = leftMargin;
 
@@ -125,18 +126,18 @@ public partial class MainForm : Form
         {
             Text = "⚙ Settings",
             Location = new Point(btnX, btnY),
-            Size = new Size(btnWidth, 36),
+            Size = new Size(btnWidth, 34),
             Font = new Font("Segoe UI", 9)
         };
         btnSettings.Click += BtnSettings_Click;
         this.Controls.Add(btnSettings);
-        btnX += btnWidth + 8;
+        btnX += btnWidth + 6;
 
         btnRunNow = new Button
         {
             Text = "▶ Run Now",
             Location = new Point(btnX, btnY),
-            Size = new Size(btnWidth, 36),
+            Size = new Size(btnWidth, 34),
             Font = new Font("Segoe UI", 9),
             BackColor = Color.FromArgb(0, 120, 215),
             ForeColor = Color.White,
@@ -144,24 +145,35 @@ public partial class MainForm : Form
         };
         btnRunNow.Click += BtnRunNow_Click;
         this.Controls.Add(btnRunNow);
-        btnX += btnWidth + 8;
+        btnX += btnWidth + 6;
 
         btnViewLog = new Button
         {
-            Text = "📄 View Log",
+            Text = "📄 Log",
             Location = new Point(btnX, btnY),
-            Size = new Size(btnWidth, 36),
+            Size = new Size(btnWidth, 34),
             Font = new Font("Segoe UI", 9)
         };
         btnViewLog.Click += BtnViewLog_Click;
         this.Controls.Add(btnViewLog);
-        btnX += btnWidth + 8;
+        btnX += btnWidth + 6;
+
+        btnHistory = new Button
+        {
+            Text = "📊 History",
+            Location = new Point(btnX, btnY),
+            Size = new Size(btnWidth, 34),
+            Font = new Font("Segoe UI", 9)
+        };
+        btnHistory.Click += BtnHistory_Click;
+        this.Controls.Add(btnHistory);
+        btnX += btnWidth + 6;
 
         btnExit = new Button
         {
             Text = "✕ Exit",
             Location = new Point(btnX, btnY),
-            Size = new Size(btnWidth, 36),
+            Size = new Size(btnWidth, 34),
             Font = new Font("Segoe UI", 9)
         };
         btnExit.Click += BtnExit_Click;
@@ -330,6 +342,12 @@ public partial class MainForm : Form
         {
             MessageBox.Show("ยังไม่มี log file", "View Log", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
+    }
+
+    private void BtnHistory_Click(object? sender, EventArgs e)
+    {
+        using var dlg = new SyncHistoryForm(_config);
+        dlg.ShowDialog(this);
     }
 
     private void BtnExit_Click(object? sender, EventArgs e)

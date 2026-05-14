@@ -11,6 +11,7 @@ public class AppConfig
     public string PgUser { get; set; } = "";
     public string PgPass { get; set; } = "";
     public int IntervalHours { get; set; } = 1;
+    public DateTime LastSyncTime { get; set; } = DateTime.MinValue;
 
     private static string ConfigFilePath =>
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
