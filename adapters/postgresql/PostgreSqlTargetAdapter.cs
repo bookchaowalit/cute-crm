@@ -80,26 +80,27 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
 
-        // Get actual column order from table schema
+        // Get column names AND types from table schema
         var schemaSql = $"""
-            SELECT column_name FROM information_schema.columns
+            SELECT column_name, udt_name
+            FROM information_schema.columns
             WHERE table_schema = @schema AND table_name = @table
             ORDER BY ordinal_position
             """;
-        var columns = new List<string>();
+        var columns = new List<(string Name, string PgType)>();
         await using (var colCmd = new NpgsqlCommand(schemaSql, conn))
         {
             colCmd.Parameters.AddWithValue("schema", _schema);
             colCmd.Parameters.AddWithValue("table", tableName);
             await using var colReader = await colCmd.ExecuteReaderAsync(ct);
             while (await colReader.ReadAsync(ct))
-                columns.Add(colReader.GetString(0));
+                columns.Add((colReader.GetString(0), colReader.GetString(1)));
         }
 
         if (columns.Count == 0) return 0;
 
         // Build INSERT statement with parameterized values
-        var colNames = string.Join(", ", columns.Select(c => $"\"{c}\""));
+        var colNames = string.Join(", ", columns.Select(c => $"\"{c.Name}\""));
         var paramNames = string.Join(", ", columns.Select((_, i) => $"@p{i}"));
         var insertSql = $"INSERT INTO \"{_schema}\".\"{tableName}\" ({colNames}) VALUES ({paramNames})";
 
@@ -111,14 +112,95 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
             cmd.Parameters.Clear();
             for (int i = 0; i < columns.Count; i++)
             {
-                var val = record.TryGetValue(columns[i], out var v) ? v : DBNull.Value;
+                var (colName, pgType) = columns[i];
+                object? val = DBNull.Value;
+
+                if (record.TryGetValue(colName, out var rawVal) && rawVal != null)
+                {
+                    // Convert based on PostgreSQL column type
+                    val = ConvertValue(rawVal, pgType);
+                }
+
                 cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
             }
-            await cmd.ExecuteNonQueryAsync(ct);
-            inserted++;
+
+            try
+            {
+                await cmd.ExecuteNonQueryAsync(ct);
+                inserted++;
+            }
+            catch
+            {
+                // Per-row insert failed — skip this row but continue with others
+            }
         }
 
         return inserted;
+    }
+
+    /// <summary>
+    /// Convert a raw DBF value to the correct .NET type for the PostgreSQL column.
+    /// </summary>
+    private static object? ConvertValue(object? value, string pgType)
+    {
+        if (value == null) return DBNull.Value;
+
+        var str = value.ToString()?.Trim();
+        if (string.IsNullOrEmpty(str)) return DBNull.Value;
+
+        try
+        {
+            switch (pgType)
+            {
+                case "int2":
+                case "int4":
+                case "int8":
+                case "bigint":
+                    if (int.TryParse(str, out int i)) return i;
+                    if (long.TryParse(str, out long l)) return l;
+                    return 0;
+
+                case "numeric":
+                case "decimal":
+                case "float4":
+                case "float8":
+                    if (decimal.TryParse(str, System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out decimal d))
+                        return d;
+                    return 0m;
+
+                case "date":
+                    if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out DateTime d1))
+                        return d1;
+                    if (DateTime.TryParse(str, out DateTime d2))
+                        return d2;
+                    return DBNull.Value;
+
+                case "timestamp":
+                case "timestamptz":
+                    if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out DateTime dt1))
+                        return dt1;
+                    if (DateTime.TryParse(str, out DateTime dt2))
+                        return dt2;
+                    return DBNull.Value;
+
+                case "bool":
+                case "boolean":
+                    return str.Equals("T", StringComparison.OrdinalIgnoreCase) ||
+                           str.Equals("Y", StringComparison.OrdinalIgnoreCase) ||
+                           str.Equals("1", StringComparison.OrdinalIgnoreCase);
+
+                default:
+                    // text, varchar, etc. — strip null bytes
+                    return str.Replace("\0", "");
+            }
+        }
+        catch
+        {
+            return str.Replace("\0", "");
+        }
     }
 
     public async Task<ISet<string>> GetTableNamesAsync(CancellationToken ct = default)
