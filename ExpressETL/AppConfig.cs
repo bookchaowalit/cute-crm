@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace ExpressETL;
 
@@ -25,13 +26,32 @@ public class AppConfig
     {
         if (File.Exists(ConfigFilePath))
         {
-            var json = File.ReadAllText(ConfigFilePath);
-            return JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
+            var content = File.ReadAllText(ConfigFilePath);
+
+            // Try to decrypt first (if encrypted)
+            if (ConfigEncryption.IsEncrypted(content))
+            {
+                var decrypted = ConfigEncryption.Decrypt(content);
+                if (decrypted != null) return decrypted;
+            }
+
+            // Fall back to plain JSON (backwards compatibility)
+            return JsonSerializer.Deserialize<AppConfig>(content) ?? new AppConfig();
         }
         return new AppConfig();
     }
 
     public void Save()
+    {
+        // Always save encrypted
+        var encrypted = ConfigEncryption.Encrypt(this);
+        File.WriteAllText(ConfigFilePath, encrypted);
+    }
+
+    /// <summary>
+    /// Save as plain JSON (for debugging or manual edit)
+    /// </summary>
+    public void SavePlain()
     {
         var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(ConfigFilePath, json);
