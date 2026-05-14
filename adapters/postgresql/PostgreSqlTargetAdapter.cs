@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Linq;
 using AccountingETL.Core.Domain;
 using AccountingETL.Core.Exceptions;
@@ -118,10 +119,23 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
             {
                 if (!record.TryGetValue(c.Name, out var rawVal) || rawVal == null)
                     return "NULL";
-                var str = rawVal.ToString()?.Replace("\0", "").Trim() ?? "";
+
+                // Use invariant culture for numeric types to avoid locale thousands-separators
+                // (e.g. Thai locale turns 3500.00 → "3,500.00" which PostgreSQL rejects)
+                var str = rawVal switch
+                {
+                    decimal dv => dv.ToString(CultureInfo.InvariantCulture),
+                    double  dv => dv.ToString(CultureInfo.InvariantCulture),
+                    float   fv => fv.ToString(CultureInfo.InvariantCulture),
+                    int     iv => iv.ToString(),
+                    long    lv => lv.ToString(),
+                    _          => rawVal.ToString()?.Replace("\0", "").Trim() ?? ""
+                };
+
                 if (string.IsNullOrEmpty(str))
                     return "NULL";
-                return $"'{str.Replace("'", "''")}'";
+
+                return FormatForType(str, c.PgType);
             });
             var rowSql = $"INSERT INTO \"{_schema}\".\"{tableName}\" ({colNames}) VALUES ({string.Join(", ", values)})";
 
@@ -142,6 +156,58 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
             Log?.Invoke($"  ⚠ {tableName}: {failed}/{recordsList.Count} rows skipped — {firstError}");
 
         return inserted;
+    }
+
+    /// <summary>
+    /// Convert a string value to a safe SQL literal for the given PostgreSQL udt_name.
+    /// Returns "NULL" when the value cannot be coerced to the target type.
+    /// </summary>
+    private static string FormatForType(string str, string pgType)
+    {
+        switch (pgType)
+        {
+            case "int2":
+            case "int4":
+            case "int8":
+                if (long.TryParse(str, out var l)) return l.ToString();
+                // Handle "3500.00" style values stored in integer columns
+                if (decimal.TryParse(str, NumberStyles.Any, CultureInfo.InvariantCulture, out var dInt))
+                    return ((long)Math.Truncate(dInt)).ToString();
+                return "NULL";
+
+            case "numeric":
+            case "float4":
+            case "float8":
+                return decimal.TryParse(str, NumberStyles.Any, CultureInfo.InvariantCulture, out _)
+                    ? $"'{str}'"
+                    : "NULL";
+
+            case "date":
+                // DBF stores dates as YYYYMMDD strings
+                if (DateTime.TryParseExact(str, "yyyyMMdd", CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out var dt))
+                    return $"'{dt:yyyy-MM-dd}'";
+                return "NULL";
+
+            case "timestamp":
+            case "timestamptz":
+                if (DateTime.TryParse(str, CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal, out var ts))
+                    return $"'{ts.ToUniversalTime():yyyy-MM-dd HH:mm:ss}'";
+                return "NULL";
+
+            case "bool":
+                if (str.Equals("T", StringComparison.OrdinalIgnoreCase) ||
+                    str.Equals("Y", StringComparison.OrdinalIgnoreCase) || str == "1")
+                    return "TRUE";
+                if (str.Equals("F", StringComparison.OrdinalIgnoreCase) ||
+                    str.Equals("N", StringComparison.OrdinalIgnoreCase) || str == "0")
+                    return "FALSE";
+                return "NULL";
+
+            default:
+                return $"'{str.Replace("'", "''")}'";
+        }
     }
 
     public async Task<ISet<string>> GetTableNamesAsync(CancellationToken ct = default)
