@@ -24,6 +24,7 @@ public partial class MainForm : Form
     private Button btnRunNow = null!;
     private Button btnViewLog = null!;
     private Button btnHistory = null!;
+    private Button btnAbout = null!;
     private Button btnExit = null!;
     private ProgressBar progressBar = null!;
     private System.Windows.Forms.Timer schedulerTimer = null!;
@@ -167,6 +168,17 @@ public partial class MainForm : Form
         };
         btnHistory.Click += BtnHistory_Click;
         this.Controls.Add(btnHistory);
+        btnX += btnWidth + 6;
+
+        btnAbout = new Button
+        {
+            Text = "ℹ️ About",
+            Location = new Point(btnX, btnY),
+            Size = new Size(btnWidth, 34),
+            Font = new Font("Segoe UI", 9)
+        };
+        btnAbout.Click += BtnAbout_Click;
+        this.Controls.Add(btnAbout);
         btnX += btnWidth + 6;
 
         btnExit = new Button
@@ -347,6 +359,88 @@ public partial class MainForm : Form
     private void BtnHistory_Click(object? sender, EventArgs e)
     {
         using var dlg = new SyncHistoryForm(_config);
+        dlg.ShowDialog(this);
+    }
+
+    private async void BtnAbout_Click(object? sender, EventArgs e)
+    {
+        var version = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetName().Version?.ToString(3) ?? "1.0.0";
+
+        var msg = $"Express → PostgreSQL ETL\nVersion {version}\n\n";
+        msg += "Checking for updates...";
+
+        using var dlg = new Form
+        {
+            Text = "About",
+            Size = new Size(380, 260),
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            StartPosition = FormStartPosition.CenterParent,
+            BackColor = Color.FromArgb(245, 245, 245)
+        };
+
+        var lbl = new Label
+        {
+            Text = msg,
+            Font = new Font("Segoe UI", 10),
+            Location = new Point(20, 20),
+            Size = new Size(340, 100),
+            AutoSize = false
+        };
+        dlg.Controls.Add(lbl);
+
+        var btnOk = new Button
+        {
+            Text = "OK",
+            DialogResult = DialogResult.OK,
+            Location = new Point(150, 180),
+            Size = new Size(80, 32)
+        };
+        dlg.Controls.Add(btnOk);
+        dlg.AcceptButton = btnOk;
+
+        dlg.Show(this);
+        Application.DoEvents();
+
+        // Check for updates
+        var update = await UpdateChecker.CheckAsync();
+
+        if (update != null)
+        {
+            lbl.Text = $"Express → PostgreSQL ETL\nVersion {version}\n\n" +
+                $"🆕 Version {update.LatestVersion} available!\n\n" +
+                $"Click below to open GitHub Releases page.";
+            lbl.ForeColor = Color.DarkGreen;
+
+            var btnDownload = new Button
+            {
+                Text = "📥 Open Releases",
+                Location = new Point(130, 130),
+                Size = new Size(130, 36),
+                BackColor = Color.FromArgb(0, 120, 215),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold)
+            };
+            btnDownload.Click += (s, e2) =>
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = update.ReleaseUrl,
+                    UseShellExecute = true
+                });
+            };
+            dlg.Controls.Add(btnDownload);
+        }
+        else
+        {
+            lbl.Text = $"Express → PostgreSQL ETL\nVersion {version}\n\n✅ You have the latest version!";
+            lbl.ForeColor = Color.DarkGreen;
+        }
+
+        Application.DoEvents();
         dlg.ShowDialog(this);
     }
 
