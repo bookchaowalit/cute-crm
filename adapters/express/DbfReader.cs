@@ -45,8 +45,7 @@ public class DbfReader
         short recordSize = br.ReadInt16();
 
         // === Field descriptors (32 bytes each, terminated by 0x0D) ===
-        var fields = new List<(string name, int offset, int length, int decimalCount)>();
-        int fieldOffset = 1; // 1 byte for deleted flag
+        var rawFields = new List<(string name, int storedOffset, int declaredLength, int decimalCount)>();
         int pos = 32;
 
         while (true)
@@ -64,10 +63,36 @@ public class DbfReader
             byte fieldLength = br.ReadByte();
             byte decimalCount = br.ReadByte();
 
-            fields.Add((fieldName, fieldOffset, fieldLength, decimalCount));
-            fieldOffset += fieldLength;
+            rawFields.Add((fieldName, fieldOffsetVal, fieldLength, decimalCount));
 
             pos += 32;
+        }
+
+        // VFP/Express DBF stores the actual record offset in descriptor bytes 12-15.
+        // Declared field lengths are 1 byte wider than actual, causing boundary shift per field.
+        // Use stored offsets and compute effective lengths from offset differences.
+        var fields = new List<(string name, int offset, int length, int decimalCount)>();
+        bool useStoredOffsets = rawFields.Count > 0 && rawFields[0].storedOffset == 1;
+
+        if (useStoredOffsets)
+        {
+            for (int j = 0; j < rawFields.Count; j++)
+            {
+                int effectiveLen = j < rawFields.Count - 1
+                    ? rawFields[j + 1].storedOffset - rawFields[j].storedOffset
+                    : rawFields[j].declaredLength;
+                fields.Add((rawFields[j].name, rawFields[j].storedOffset, effectiveLen, rawFields[j].decimalCount));
+            }
+        }
+        else
+        {
+            // dBASE III compatibility: stored offsets are 0, fall back to accumulation
+            int fieldOffset = 1;
+            foreach (var (name, _, declaredLength, dec) in rawFields)
+            {
+                fields.Add((name, fieldOffset, declaredLength, dec));
+                fieldOffset += declaredLength;
+            }
         }
 
         // === Read records ===
@@ -81,7 +106,8 @@ public class DbfReader
             var record = new Record();
             foreach (var (name, offset, length, dec) in fields)
             {
-                fs.Seek(headerSize + 1 + i * recordSize + offset, SeekOrigin.Begin);
+                // offset already accounts for the deletion flag byte at position 0
+                fs.Seek(headerSize + i * recordSize + offset, SeekOrigin.Begin);
                 byte[] valBytes = br.ReadBytes(length);
                 string valStr = _encoding.GetString(valBytes).TrimEnd('\0').Trim();
 
@@ -115,8 +141,7 @@ public class DbfReader
             short headerSize = br.ReadInt16();
             short recordSize = br.ReadInt16();
 
-            var fields = new List<SourceFieldInfo>();
-            int fieldOffset = 1;
+            var rawFields = new List<(string name, char type, int storedOffset, int declaredLength, int decimals)>();
             int pos = 32;
 
             while (true)
@@ -130,18 +155,26 @@ public class DbfReader
                 string fieldName = _encoding.GetString(nameBytes).TrimEnd('\0').Trim();
                 byte fieldType = br.ReadByte();
 
-                br.ReadInt32(); // offset
+                int storedOffset = br.ReadInt32();
                 byte fieldLength = br.ReadByte();
                 byte decimalCount = br.ReadByte();
 
-                fields.Add(new SourceFieldInfo(
-                    Name: fieldName,
-                    DbType: ((char)fieldType).ToString(),
-                    Length: fieldLength,
-                    Decimals: decimalCount));
-
-                fieldOffset += fieldLength;
+                rawFields.Add((fieldName, (char)fieldType, storedOffset, fieldLength, decimalCount));
                 pos += 32;
+            }
+
+            bool useStoredOffsets = rawFields.Count > 0 && rawFields[0].storedOffset == 1;
+            var fields = new List<SourceFieldInfo>();
+            for (int j = 0; j < rawFields.Count; j++)
+            {
+                int effectiveLen = useStoredOffsets && j < rawFields.Count - 1
+                    ? rawFields[j + 1].storedOffset - rawFields[j].storedOffset
+                    : rawFields[j].declaredLength;
+                fields.Add(new SourceFieldInfo(
+                    Name: rawFields[j].name,
+                    DbType: rawFields[j].type.ToString(),
+                    Length: effectiveLen,
+                    Decimals: rawFields[j].decimals));
             }
 
             return new TableInfo(
