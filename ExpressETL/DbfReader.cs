@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace ExpressETL;
 
 /// <summary>
@@ -5,17 +7,18 @@ namespace ExpressETL;
 /// </summary>
 public class DbfReader
 {
-    private readonly string _encodingName;
+    private readonly Encoding _encoding;
 
-    public DbfReader(string encoding = "tis-620")
+    public DbfReader(string encodingName = "tis-620")
     {
-        _encodingName = encoding;
+        // Register Windows code pages encoding provider for non-UTF encodings like tis-620
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        _encoding = Encoding.GetEncoding(encodingName);
     }
 
     public List<Dictionary<string, object>> Read(string filePath)
     {
         var results = new List<Dictionary<string, object>>();
-        var encoding = System.Text.Encoding.GetEncoding(_encodingName);
 
         using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var br = new BinaryReader(fs);
@@ -43,7 +46,7 @@ public class DbfReader
 
             fs.Seek(pos, SeekOrigin.Begin);
             byte[] nameBytes = br.ReadBytes(11);
-            string fieldName = encoding.GetString(nameBytes).TrimEnd('\0').Trim();
+            string fieldName = _encoding.GetString(nameBytes).TrimEnd('\0').Trim();
             br.ReadByte(); // field type
 
             int fieldOffsetVal = br.ReadInt32();
@@ -70,7 +73,7 @@ public class DbfReader
             {
                 fs.Seek(headerSize + 1 + i * recordSize + offset, SeekOrigin.Begin);
                 byte[] valBytes = br.ReadBytes(length);
-                string valStr = encoding.GetString(valBytes).TrimEnd('\0').Trim();
+                string valStr = _encoding.GetString(valBytes).TrimEnd('\0').Trim();
 
                 // Parse type
                 record[name] = ParseValue(valStr, dec);
