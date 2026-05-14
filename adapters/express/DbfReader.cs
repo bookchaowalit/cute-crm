@@ -56,14 +56,19 @@ public class DbfReader
 
             fs.Seek(pos, SeekOrigin.Begin);
             byte[] nameBytes = br.ReadBytes(11);
-            string fieldName = _encoding.GetString(nameBytes).TrimEnd('\0').Trim();
+            // DBF names are null-terminated within the 11-byte field; truncate at first null
+            var rawName = _encoding.GetString(nameBytes);
+            string fieldName = rawName.Contains('\0')
+                ? rawName[..rawName.IndexOf('\0')] : rawName;
+            fieldName = fieldName.Trim();
             byte fieldType = br.ReadByte();
 
             int fieldOffsetVal = br.ReadInt32();
             byte fieldLength = br.ReadByte();
             byte decimalCount = br.ReadByte();
 
-            rawFields.Add((fieldName, fieldOffsetVal, fieldLength, decimalCount));
+            if (!string.IsNullOrEmpty(fieldName))
+                rawFields.Add((fieldName, fieldOffsetVal, fieldLength, decimalCount));
 
             pos += 32;
         }
@@ -152,14 +157,18 @@ public class DbfReader
 
                 fs.Seek(pos, SeekOrigin.Begin);
                 byte[] nameBytes = br.ReadBytes(11);
-                string fieldName = _encoding.GetString(nameBytes).TrimEnd('\0').Trim();
+                var rawName = _encoding.GetString(nameBytes);
+                string fieldName = rawName.Contains('\0')
+                    ? rawName[..rawName.IndexOf('\0')] : rawName;
+                fieldName = fieldName.Trim();
                 byte fieldType = br.ReadByte();
 
                 int storedOffset = br.ReadInt32();
                 byte fieldLength = br.ReadByte();
                 byte decimalCount = br.ReadByte();
 
-                rawFields.Add((fieldName, (char)fieldType, storedOffset, fieldLength, decimalCount));
+                if (!string.IsNullOrEmpty(fieldName))
+                    rawFields.Add((fieldName, (char)fieldType, storedOffset, fieldLength, decimalCount));
                 pos += 32;
             }
 

@@ -14,7 +14,7 @@ public record SourceFieldInfo(
     /// </summary>
     public string PgType => DbType switch
     {
-        "N" => Decimals > 0 ? $"numeric(18,{Decimals})" : "bigint",
+        "N" => Decimals > 0 ? $"numeric(18,{Math.Min(Decimals, 17)})" : "bigint",
         "D" => "date",
         "L" => "boolean",
         "M" => "text",

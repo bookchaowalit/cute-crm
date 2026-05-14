@@ -62,17 +62,32 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
 
-        var columns = string.Join(",\n    ", tableInfo.Fields.Select(f =>
-            $"\"{f.Name}\" {f.PgType}"));
+        var validFields = tableInfo.Fields.Where(f => !string.IsNullOrWhiteSpace(f.Name)).ToList();
 
+        var columns = string.Join(",\n    ", validFields.Select(f => $"\"{f.Name}\" {f.PgType}"));
         var sql = $"""
             CREATE TABLE IF NOT EXISTS "{_schema}"."{tableInfo.TableName}" (
                 {columns}
             );
             """;
 
-        await using var cmd = new NpgsqlCommand(sql, conn);
-        await cmd.ExecuteNonQueryAsync(ct);
+        try
+        {
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        catch
+        {
+            // Fallback: create with all text columns (handles malformed field type/length in DBF header)
+            var textColumns = string.Join(",\n    ", validFields.Select(f => $"\"{f.Name}\" text"));
+            var fallbackSql = $"""
+                CREATE TABLE IF NOT EXISTS "{_schema}"."{tableInfo.TableName}" (
+                    {textColumns}
+                );
+                """;
+            await using var cmd2 = new NpgsqlCommand(fallbackSql, conn);
+            await cmd2.ExecuteNonQueryAsync(ct);
+        }
     }
 
     public async Task<int> InsertAllAsync(string tableName, IEnumerable<Record> records, CancellationToken ct = default)
