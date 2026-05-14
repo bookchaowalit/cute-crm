@@ -44,13 +44,14 @@ public class EtlService
             await SyncItemsAsync(conn, syncId, progress);
             await SyncArInvoicesAsync(conn, syncId, progress);
             await SyncApInvoicesAsync(conn, syncId, progress);
+            await SyncGlTransactionsAsync(conn, syncId, progress);
 
             await LogSyncEndAsync(conn, syncId);
             _config.LastSyncTime = syncId;
             _config.Save();
 
             sw.Stop();
-            summary = $"Customer ✅ | Supplier ✅ | Item ✅ | AR ✅ | AP ✅ | {sw.ElapsedMilliseconds}ms";
+            summary = $"Customer ✅ | Supplier ✅ | Item ✅ | AR ✅ | AP ✅ | GL ✅ | {sw.ElapsedMilliseconds}ms";
             Log("====== ETL เสร็จสิ้น ======");
 
             // LINE Notify on success
@@ -860,8 +861,96 @@ public class EtlService
 
         sw.Stop();
         Log($"✓ AP Invoices: เพิ่ม {insertedH}, อัปเดต {updatedH}, detail {detailInserted} รายการ ({sw.ElapsedMilliseconds}ms)");
-        progress?.Report($"AP Inv: +{insertedH} ~{updatedH} detail:{detailInserted} ⏱{sw.ElapsedMilliseconds}ms");
+        progress?.Report($"AP Inv: +{insertedH} ~{updatedH} detail:{detailInserted} {sw.ElapsedMilliseconds}ms");
         await LogTableSyncAsync(conn, syncId, "ap_invoices", insertedH, updatedH, skippedH, sw.ElapsedMilliseconds);
+    }
+
+    // ===== GL Transactions (GLTRANS.DBF — รายการบัญชีแยกประเภท) =====
+    private async Task SyncGlTransactionsAsync(NpgsqlConnection conn, DateTime syncId, IProgress<string>? progress)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Find GL file
+        var glPath = FindDbfFile(_config.DbfPath, "GLTRANS.DBF",
+            "GL_TRAN.DBF", "GL_TRN.DBF", "GLTRAN.DBF", "GL.DBF");
+        if (glPath == null)
+        {
+            Log("⚠ ไม่พบ GL Transaction file — ข้าม");
+            return;
+        }
+
+        Log($"อ่าน {Path.GetFileName(glPath)} (GL transactions) ...");
+        LogDbfStructure(glPath);
+
+        var records = _dbfReader.Read(glPath);
+        Log($"พบ GL Transaction {records.Count} รายการ");
+        if (records.Count > 0)
+            Log($"Fields: {string.Join(", ", records[0].Keys.Take(10))}");
+
+        int inserted = 0, skipped = 0;
+
+        // GL is typically append-only — use COPY with ON CONFLICT
+        var validRecords = records.Where(r =>
+        {
+            var docNo = GetString(r, "DOCNO");
+            var accCode = GetString(r, "ACCODE");
+            var date = ParseDate(r, "GLDATE");
+            // Need at least docNo + accCode + date for uniqueness
+            return !string.IsNullOrWhiteSpace(docNo) && !string.IsNullOrWhiteSpace(accCode) && date.HasValue;
+        }).ToList();
+
+        if (validRecords.Count > 0)
+        {
+            // Use COPY to temp table, then INSERT ... ON CONFLICT
+            await using var cmd = new NpgsqlCommand("""
+                CREATE TEMP TABLE _gl_batch (
+                    gl_date DATE, doc_no VARCHAR(30), acc_code VARCHAR(20), acc_name VARCHAR(200),
+                    debit NUMERIC(15,2), credit NUMERIC(15,2), remark TEXT
+                ) ON COMMIT DROP;
+                """, conn);
+            await cmd.ExecuteNonQueryAsync();
+
+            await using var writer = await conn.BeginBinaryImportAsync("""
+                COPY _gl_batch (gl_date, doc_no, acc_code, acc_name, debit, credit, remark)
+                FROM STDIN (FORMAT BINARY)
+                """);
+
+            foreach (var r in validRecords)
+            {
+                await writer.StartRowAsync();
+                await writer.WriteAsync(ParseDate(r, "GLDATE")!.Value);
+                await writer.WriteAsync(GetString(r, "DOCNO"));
+                await writer.WriteAsync(GetString(r, "ACCODE"));
+                await writer.WriteAsync((object?)GetString(r, "ACNAME") ?? DBNull.Value);
+                await writer.WriteAsync(GetDecimal(r, "DEBIT"));
+                await writer.WriteAsync(GetDecimal(r, "CREDIT"));
+                await writer.WriteAsync((object?)GetString(r, "REMARK") ?? DBNull.Value);
+            }
+            await writer.CompleteAsync();
+
+            // Insert with ON CONFLICT DO NOTHING (GL is typically append-only)
+            await using var insertCmd = new NpgsqlCommand("""
+                INSERT INTO express_staging.gl_transactions
+                    (gl_date, doc_no, acc_code, acc_name, debit, credit, remark, updated_at)
+                SELECT gl_date, doc_no, acc_code, acc_name, debit, credit, remark, NOW()
+                FROM _gl_batch
+                ON CONFLICT (doc_no, acc_code, gl_date) DO UPDATE SET
+                    acc_name = EXCLUDED.acc_name,
+                    debit = EXCLUDED.debit,
+                    credit = EXCLUDED.credit,
+                    remark = EXCLUDED.remark,
+                    updated_at = NOW()
+                """, conn);
+
+            inserted = (int)await insertCmd.ExecuteNonQueryAsync();
+        }
+
+        skipped = validRecords.Count - inserted;
+
+        sw.Stop();
+        Log($"✓ GL Transactions: เพิ่ม/อัปเดต {inserted}, ข้าม {skipped} ({sw.ElapsedMilliseconds}ms)");
+        progress?.Report($"GL: +{inserted} ~{skipped} {sw.ElapsedMilliseconds}ms");
+        await LogTableSyncAsync(conn, syncId, "gl_transactions", inserted, 0, skipped, sw.ElapsedMilliseconds);
     }
 
     // ===== Helpers =====
