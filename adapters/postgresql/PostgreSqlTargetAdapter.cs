@@ -98,27 +98,27 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
 
         if (columns.Count == 0) return 0;
 
-        // Use text-based COPY (more forgiving than binary for dynamic schemas)
-        var colList = string.Join(",", columns.Select(c => $"\"{c}\""));
-        using var writer = conn.BeginTextImport(
-            $"COPY \"{_schema}\".\"{tableName}\" ({colList}) FROM STDIN (FORMAT CSV, HEADER FALSE, QUOTE '\"', ESCAPE '\"')");
+        // Build INSERT statement with parameterized values
+        var colNames = string.Join(", ", columns.Select(c => $"\"{c}\""));
+        var paramNames = string.Join(", ", columns.Select((_, i) => $"@p{i}"));
+        var insertSql = $"INSERT INTO \"{_schema}\".\"{tableName}\" ({colNames}) VALUES ({paramNames})";
+
+        int inserted = 0;
+        await using var cmd = new NpgsqlCommand(insertSql, conn);
 
         foreach (var record in recordsList)
         {
-            var values = columns.Select(c =>
+            cmd.Parameters.Clear();
+            for (int i = 0; i < columns.Count; i++)
             {
-                if (!record.TryGetValue(c, out var v) || v == null)
-                    return "";
-                var str = v.ToString()!;
-                // Escape CSV: double any existing quotes, wrap in quotes if contains comma/quote/newline
-                if (str.Contains('"') || str.Contains(',') || str.Contains('\n') || str.Contains('\r'))
-                    return "\"" + str.Replace("\"", "\"\"") + "\"";
-                return str;
-            });
-            writer.WriteLine(string.Join(",", values));
+                var val = record.TryGetValue(columns[i], out var v) ? v : DBNull.Value;
+                cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
+            }
+            await cmd.ExecuteNonQueryAsync(ct);
+            inserted++;
         }
 
-        return recordsList.Count;
+        return inserted;
     }
 
     public async Task<ISet<string>> GetTableNamesAsync(CancellationToken ct = default)
