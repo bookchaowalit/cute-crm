@@ -88,7 +88,7 @@ public class EtlPipeline : IEtlPipeline
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
-        var syncStartTime = DateTimeOffset.Now;
+        var syncStartTime = DateTimeOffset.UtcNow;
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         LogMessage("====== ETL เริ่มทำงาน ======");

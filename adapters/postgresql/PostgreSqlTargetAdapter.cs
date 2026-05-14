@@ -484,7 +484,7 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
             """;
 
         await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("syncTime", log.SyncTime);
+        cmd.Parameters.AddWithValue("syncTime", log.SyncTime.ToUniversalTime());
         cmd.Parameters.AddWithValue("entity", log.Entity.ToString());
         cmd.Parameters.AddWithValue("inserted", log.Inserted);
         cmd.Parameters.AddWithValue("updated", log.Updated);
