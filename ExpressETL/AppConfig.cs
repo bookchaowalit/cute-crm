@@ -23,6 +23,18 @@ public class AppConfig
     public bool MinimizeToTray { get; set; } = false;
     public bool AutoStart { get; set; } = false;
 
+    // Encoding
+    public string DbfEncoding { get; set; } = "tis-620";
+
+    // ERPNext Direct Sync
+    public bool SyncToErpNext { get; set; } = false;
+    public string ErpNextUrl { get; set; } = "";
+    public string ErpNextApiKey { get; set; } = "";
+    public string ErpNextApiSecret { get; set; } = "";
+
+    // Field Mapping
+    public FieldMappingConfig FieldMapping { get; set; } = new();
+
     private static string ConfigFilePath =>
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
 

@@ -25,6 +25,18 @@ public partial class SettingsForm : Form
     private CheckBox chkMinimizeToTray = null!;
     private CheckBox chkAutoStart = null!;
 
+    // Encoding
+    private ComboBox cmbEncoding = null!;
+
+    // ERPNext fields
+    private CheckBox chkSyncToErpNext = null!;
+    private TextBox txtErpUrl = null!;
+    private TextBox txtErpApiKey = null!;
+    private TextBox txtErpApiSecret = null!;
+
+    // Field Mapping textboxes (8 fields, 4 rows of 2)
+    private TextBox[] txtFieldMappings = Array.Empty<TextBox>();
+
     public SettingsForm(AppConfig config)
     {
         _config = config;
@@ -35,7 +47,7 @@ public partial class SettingsForm : Form
     private void InitializeComponent()
     {
         this.Text = "ตั้งค่า ETL";
-        this.Size = new Size(480, 520);
+        this.Size = new Size(560, 620);
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
         this.MaximizeBox = false;
         this.MinimizeBox = false;
@@ -112,6 +124,34 @@ public partial class SettingsForm : Form
         this.Controls.Add(lblDbf);
         this.Controls.Add(dbfPanel);
         y += rowHeight;
+
+        // DBF Encoding dropdown
+        cmbEncoding = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Location = new Point(fieldX, y),
+            Size = new Size(200, 28)
+        };
+        var encodings = new[]
+        {
+            ("tis-620", "Thai (tis-620)"),
+            ("cp874", "Thai (cp874)"),
+            ("windows-874", "Thai (windows-874)"),
+            ("utf-8", "UTF-8"),
+            ("iso-8859-1", "Western (ISO-8859-1)"),
+            ("windows-1252", "Western (windows-1252)"),
+            ("shift_jis", "Japanese (Shift-JIS)"),
+            ("gb2312", "Chinese (GB2312)"),
+        };
+        foreach (var (code, name) in encodings)
+        {
+            cmbEncoding.Items.Add(new { Code = code, Name = name });
+        }
+        cmbEncoding.DisplayMember = "Name";
+        cmbEncoding.ValueMember = "Code";
+        cmbEncoding.SelectedValue = _config.DbfEncoding;
+        AddField("DBF Encoding:", cmbEncoding);
+        y += 0; // AddField already increments y
 
         txtPgHost = new TextBox { Text = _config.PgHost };
         AddField("PG Host:", txtPgHost);
@@ -211,14 +251,171 @@ public partial class SettingsForm : Form
 
         chkAutoStart = new CheckBox
         {
-            Text = "Auto-start เมื่อเปิด Windows",
+            Text = "Auto-start เมื่อเปิด Windows (Startup)",
             Location = new Point(fieldX, y),
             Size = new Size(fieldWidth, 22),
             Checked = _config.AutoStart,
             AutoSize = false
         };
         this.Controls.Add(chkAutoStart);
-        y += 16;
+        y += 24;
+
+        var btnService = new Button
+        {
+            Text = ServiceManager.IsInstalled() ? "❌ Uninstall Service" : "⚙ Install as Windows Service",
+            Location = new Point(fieldX, y),
+            Size = new Size(250, 30),
+            Font = new Font("Segoe UI", 9)
+        };
+        btnService.Click += (s, e) =>
+        {
+            if (ServiceManager.IsInstalled())
+            {
+                if (MessageBox.Show("Uninstall Windows Service?", "Confirm",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                {
+                    ServiceManager.Uninstall();
+                    btnService.Text = "⚙ Install as Windows Service";
+                    MessageBox.Show("Service removed.", "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+            else
+            {
+                if (MessageBox.Show("Install ExpressETL as a Windows Service?\n\n" +
+                    "This will run ETL automatically even without login.", "Confirm",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                {
+                    ServiceManager.Install(System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "");
+                    ServiceManager.Start();
+                    btnService.Text = "❌ Uninstall Service";
+                    MessageBox.Show("Service installed and started!", "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+        };
+        this.Controls.Add(btnService);
+        y += 36;
+
+        // ERPNext Direct Sync section
+        var erpLabel = new Label
+        {
+            Text = " ERPNext Direct Sync",
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            Location = new Point(leftMargin, y),
+            Size = new Size(420, 24),
+            AutoSize = false
+        };
+        this.Controls.Add(erpLabel);
+        y += 26;
+
+        chkSyncToErpNext = new CheckBox
+        {
+            Text = "Sync เข้า ERPNext โดยตรง (REST API)",
+            Location = new Point(fieldX, y),
+            Size = new Size(fieldWidth, 22),
+            Checked = _config.SyncToErpNext,
+            AutoSize = false
+        };
+        chkSyncToErpNext.CheckedChanged += (s, e) =>
+        {
+            txtErpUrl.Enabled = chkSyncToErpNext.Checked;
+            txtErpApiKey.Enabled = chkSyncToErpNext.Checked;
+            txtErpApiSecret.Enabled = chkSyncToErpNext.Checked;
+        };
+        this.Controls.Add(chkSyncToErpNext);
+        y += 24;
+
+        txtErpUrl = new TextBox { Text = _config.ErpNextUrl, Enabled = _config.SyncToErpNext };
+        AddField("ERPNext URL:", txtErpUrl);
+
+        txtErpApiKey = new TextBox { Text = _config.ErpNextApiKey, Enabled = _config.SyncToErpNext };
+        AddField("API Key:", txtErpApiKey);
+
+        txtErpApiSecret = new TextBox { Text = _config.ErpNextApiSecret, UseSystemPasswordChar = true, Enabled = _config.SyncToErpNext };
+        AddField("API Secret:", txtErpApiSecret);
+
+        // Field Mapping section
+        var fmLabel = new Label
+        {
+            Text = " Field Mapping",
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            Location = new Point(leftMargin, y),
+            Size = new Size(420, 24),
+            AutoSize = false
+        };
+        this.Controls.Add(fmLabel);
+        y += 26;
+
+        var fmInfo = new Label
+        {
+            Text = "เปลี่ยนชื่อ field ถ้า DBF ของคุณใช้ชื่อต่างจาก default",
+            Font = new Font("Segoe UI", 8),
+            ForeColor = Color.Gray,
+            Location = new Point(fieldX, y),
+            Size = new Size(fieldWidth + 40, 16),
+            AutoSize = false
+        };
+        this.Controls.Add(fmInfo);
+        y += 18;
+
+        var fm = _config.FieldMapping;
+        var fmFields = new[]
+        {
+            ("Customer Code", fm.CustomerCodeField),
+            ("Customer Name", fm.CustomerNameField),
+            ("Supplier Code", fm.SupplierCodeField),
+            ("Supplier Name", fm.SupplierNameField),
+            ("Item Code", fm.ItemCodeField),
+            ("Item Name", fm.ItemNameField),
+            ("Sale Price", fm.ItemSalePriceField),
+            ("Cost Price", fm.ItemCostPriceField),
+        };
+
+        txtFieldMappings = new TextBox[fmFields.Length];
+        for (int i = 0; i < fmFields.Length; i++)
+        {
+            var (label, value) = fmFields[i];
+            var lbl = new Label
+            {
+                Text = label + ":",
+                Location = new Point(leftMargin, y + 8),
+                Size = new Size(100, 20),
+                TextAlign = ContentAlignment.MiddleRight,
+                AutoSize = false,
+                Font = new Font("Segoe UI", 8)
+            };
+            this.Controls.Add(lbl);
+
+            var txt = new TextBox { Text = value, Font = new Font("Consolas", 9) };
+            txt.Location = new Point(130, y);
+            txt.Size = new Size(120, 24);
+            this.Controls.Add(txt);
+            txtFieldMappings[i] = txt;
+
+            if (i % 2 == 0 && i + 1 < fmFields.Length)
+            {
+                var (label2, value2) = fmFields[i + 1];
+                var lbl2 = new Label
+                {
+                    Text = label2 + ":",
+                    Location = new Point(270, y + 8),
+                    Size = new Size(100, 20),
+                    TextAlign = ContentAlignment.MiddleRight,
+                    AutoSize = false,
+                    Font = new Font("Segoe UI", 8)
+                };
+                this.Controls.Add(lbl2);
+
+                var txt2 = new TextBox { Text = value2, Font = new Font("Consolas", 9) };
+                txt2.Location = new Point(380, y);
+                txt2.Size = new Size(120, 24);
+                this.Controls.Add(txt2);
+                txtFieldMappings[i + 1] = txt2;
+
+                i++; // Skip next iteration
+            }
+
+            y += 28;
+        }
 
         // Test connection
         btnTest = new Button
@@ -315,6 +512,28 @@ public partial class SettingsForm : Form
         _config.NotifyOnFailure = chkNotifyFailure.Checked;
         _config.MinimizeToTray = chkMinimizeToTray.Checked;
         _config.AutoStart = chkAutoStart.Checked;
+        _config.DbfEncoding = (cmbEncoding.SelectedValue as dynamic)?.Code?.ToString() ?? "tis-620";
+        _config.SyncToErpNext = chkSyncToErpNext.Checked;
+        _config.ErpNextUrl = txtErpUrl.Text.Trim();
+        _config.ErpNextApiKey = txtErpApiKey.Text.Trim();
+        _config.ErpNextApiSecret = txtErpApiSecret.Text;
+
+        // Field Mapping
+        if (txtFieldMappings.Length >= 8)
+        {
+            var fm = new FieldMappingConfig
+            {
+                CustomerCodeField = txtFieldMappings[0].Text.Trim(),
+                CustomerNameField = txtFieldMappings[1].Text.Trim(),
+                SupplierCodeField = txtFieldMappings[2].Text.Trim(),
+                SupplierNameField = txtFieldMappings[3].Text.Trim(),
+                ItemCodeField = txtFieldMappings[4].Text.Trim(),
+                ItemNameField = txtFieldMappings[5].Text.Trim(),
+                ItemSalePriceField = txtFieldMappings[6].Text.Trim(),
+                ItemCostPriceField = txtFieldMappings[7].Text.Trim()
+            };
+            _config.FieldMapping = fm;
+        }
 
         // Apply auto-start immediately
         if (_config.AutoStart) AutoStartManager.Enable();
@@ -336,7 +555,23 @@ public partial class SettingsForm : Form
             NotifyOnSuccess = chkNotifySuccess.Checked,
             NotifyOnFailure = chkNotifyFailure.Checked,
             MinimizeToTray = chkMinimizeToTray.Checked,
-            AutoStart = chkAutoStart.Checked
+            AutoStart = chkAutoStart.Checked,
+            DbfEncoding = (cmbEncoding.SelectedValue as dynamic)?.Code?.ToString() ?? "tis-620",
+            SyncToErpNext = chkSyncToErpNext.Checked,
+            ErpNextUrl = txtErpUrl.Text.Trim(),
+            ErpNextApiKey = txtErpApiKey.Text.Trim(),
+            ErpNextApiSecret = txtErpApiSecret.Text,
+            FieldMapping = txtFieldMappings.Length >= 8 ? new FieldMappingConfig
+            {
+                CustomerCodeField = txtFieldMappings[0].Text.Trim(),
+                CustomerNameField = txtFieldMappings[1].Text.Trim(),
+                SupplierCodeField = txtFieldMappings[2].Text.Trim(),
+                SupplierNameField = txtFieldMappings[3].Text.Trim(),
+                ItemCodeField = txtFieldMappings[4].Text.Trim(),
+                ItemNameField = txtFieldMappings[5].Text.Trim(),
+                ItemSalePriceField = txtFieldMappings[6].Text.Trim(),
+                ItemCostPriceField = txtFieldMappings[7].Text.Trim()
+            } : new FieldMappingConfig()
         };
     }
 }

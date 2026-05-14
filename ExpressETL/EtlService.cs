@@ -14,7 +14,7 @@ public class EtlService
     public EtlService(AppConfig config)
     {
         _config = config;
-        _dbfReader = new DbfReader("tis-620");
+        _dbfReader = new DbfReader(config.DbfEncoding);
     }
 
     private void Log(string msg) => OnLog?.Invoke(this, msg);
@@ -45,6 +45,12 @@ public class EtlService
             await SyncArInvoicesAsync(conn, syncId, progress);
             await SyncApInvoicesAsync(conn, syncId, progress);
             await SyncGlTransactionsAsync(conn, syncId, progress);
+
+            // Optional: Direct ERPNext sync
+            if (_config.SyncToErpNext && !string.IsNullOrWhiteSpace(_config.ErpNextUrl))
+            {
+                await SyncToErpNextAsync(progress);
+            }
 
             await LogSyncEndAsync(conn, syncId);
             _config.LastSyncTime = syncId;
@@ -951,6 +957,84 @@ public class EtlService
         Log($"✓ GL Transactions: เพิ่ม/อัปเดต {inserted}, ข้าม {skipped} ({sw.ElapsedMilliseconds}ms)");
         progress?.Report($"GL: +{inserted} ~{skipped} {sw.ElapsedMilliseconds}ms");
         await LogTableSyncAsync(conn, syncId, "gl_transactions", inserted, 0, skipped, sw.ElapsedMilliseconds);
+    }
+
+    // ===== Direct ERPNext Sync (optional) =====
+    private async Task SyncToErpNextAsync(IProgress<string>? progress)
+    {
+        Log("Sync เข้า ERPNext (REST API)...");
+        var erpNext = new ErpNextSync(_config.ErpNextUrl, _config.ErpNextApiKey, _config.ErpNextApiSecret);
+
+        int custOk = 0, custFail = 0;
+        int suppOk = 0, suppFail = 0;
+        int itemOk = 0, itemFail = 0;
+
+        try
+        {
+            await using var conn = new NpgsqlConnection(_config.ConnectionString);
+            await conn.OpenAsync();
+
+            // Sync Customers
+            await using (var cmd = new NpgsqlCommand("SELECT express_code, name, tax_id, tel FROM express_staging.customers", conn))
+            await using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    try
+                    {
+                        await erpNext.UpsertCustomerAsync(
+                            reader.GetString(0), reader.GetString(1),
+                            reader.IsDBNull(2) ? null : reader.GetString(2),
+                            reader.IsDBNull(3) ? null : reader.GetString(3));
+                        custOk++;
+                    }
+                    catch { custFail++; }
+                }
+            }
+
+            // Sync Suppliers
+            await using (var cmd = new NpgsqlCommand("SELECT express_code, name, tax_id FROM express_staging.suppliers", conn))
+            await using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    try
+                    {
+                        await erpNext.UpsertSupplierAsync(
+                            reader.GetString(0), reader.GetString(1),
+                            reader.IsDBNull(2) ? null : reader.GetString(2));
+                        suppOk++;
+                    }
+                    catch { suppFail++; }
+                }
+            }
+
+            // Sync Items
+            await using (var cmd = new NpgsqlCommand("SELECT item_code, item_name, sale_price, unit FROM express_staging.items", conn))
+            await using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    try
+                    {
+                        await erpNext.UpsertItemAsync(
+                            reader.GetString(0), reader.GetString(1),
+                            reader.IsDBNull(2) ? null : reader.GetDecimal(2),
+                            reader.IsDBNull(3) ? null : reader.GetString(3));
+                        itemOk++;
+                    }
+                    catch { itemFail++; }
+                }
+            }
+
+            var msg = $"ERPNext: C:{custOk}({custFail}) S:{suppOk}({suppFail}) I:{itemOk}({itemFail})";
+            Log($"✓ {msg}");
+            progress?.Report(msg);
+        }
+        catch (Exception ex)
+        {
+            Log($"⚠ ERPNext sync failed: {ex.Message}");
+        }
     }
 
     // ===== Helpers =====

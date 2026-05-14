@@ -47,11 +47,19 @@ jobs:
           $size = (Get-Item ./publish/${{ env.OUTPUT_NAME }}.exe).Length / 1MB
           Write-Output "File size: $([math]::Round($size, 2)) MB"
 
+      - name: Copy installer scripts
+        run: |
+          copy ExpressETL\install.bat ./publish/
+          copy ExpressETL\uninstall.bat ./publish/
+
       - name: Create Release (on tag only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: ./publish/${{ env.OUTPUT_NAME }}.exe
+          files: |
+            ./publish/${{ env.OUTPUT_NAME }}.exe
+            ./publish/install.bat
+            ./publish/uninstall.bat
           body: |
             ## ExpressETL — ${{ github.ref_name }}
 

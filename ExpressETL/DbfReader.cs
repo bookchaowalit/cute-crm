@@ -11,9 +11,16 @@ public class DbfReader
 
     public DbfReader(string encodingName = "tis-620")
     {
-        // Register Windows code pages encoding provider for non-UTF encodings like tis-620
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        _encoding = Encoding.GetEncoding(encodingName);
+        try
+        {
+            _encoding = Encoding.GetEncoding(encodingName);
+        }
+        catch
+        {
+            // Fallback to tis-620 if specified encoding is invalid
+            _encoding = Encoding.GetEncoding("tis-620");
+        }
     }
 
     public List<Dictionary<string, object>> Read(string filePath)
