@@ -114,34 +114,16 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
             {
                 var (colName, pgType) = columns[i];
                 object? val = DBNull.Value;
-                var npgsqlType = NpgsqlTypes.NpgsqlDbType.Text; // default
 
                 if (record.TryGetValue(colName, out var rawVal) && rawVal != null)
                 {
-                    // Convert based on PostgreSQL column type
-                    var converted = ConvertValue(rawVal, pgType);
-                    val = converted;
-
-                    // Set explicit NpgsqlDbType to prevent DateTimeOffset wrapping
-                    if (pgType == "date")
-                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Date;
-                    else if (pgType == "timestamp")
-                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Timestamp;
-                    else if (pgType == "timestamptz")
-                        npgsqlType = NpgsqlTypes.NpgsqlDbType.TimestampTz;
-                    else if (pgType is "int2" or "int4" or "int8" or "bigint")
-                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Integer;
-                    else if (pgType is "numeric" or "decimal")
-                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Numeric;
-                    else if (pgType is "float4" or "float8")
-                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Double;
-                    else if (pgType is "bool" or "boolean")
-                        npgsqlType = NpgsqlTypes.NpgsqlDbType.Boolean;
+                    val = ConvertValue(rawVal, pgType);
                 }
 
-                var param = new NpgsqlParameter($"@p{i}", npgsqlType);
-                param.Value = val ?? DBNull.Value;
-                cmd.Parameters.Add(param);
+                // Use AddWithValue — Npgsql infers type from the .NET value
+                // ConvertValue returns strings for timestamps (ISO 8601), so Npgsql sends them as text
+                // and PostgreSQL parses them natively — no DateTimeOffset wrapping
+                cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
             }
 
             try
@@ -160,35 +142,39 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
 
     /// <summary>
     /// Convert a raw DBF value to the correct .NET type for the PostgreSQL column.
+    /// For timestamp/date columns, returns ISO 8601 string to avoid Npgsql DateTimeOffset wrapping.
     /// </summary>
     private static object? ConvertValue(object? value, string pgType)
     {
         if (value == null) return DBNull.Value;
-
-        // Handle DateTime/DateTimeOffset objects directly
-        if (value is DateTime dtObj)
-        {
-            if (pgType == "date" || pgType == "timestamp" || pgType == "timestamptz")
-            {
-                return DateTime.SpecifyKind(dtObj, DateTimeKind.Utc);
-            }
-            return value;
-        }
-
-        if (value is DateTimeOffset dto)
-        {
-            if (pgType == "date" || pgType == "timestamp" || pgType == "timestamptz")
-            {
-                return DateTime.SpecifyKind(dto.UtcDateTime, DateTimeKind.Utc);
-            }
-            return value;
-        }
 
         var str = value.ToString()?.Trim();
         if (string.IsNullOrEmpty(str)) return DBNull.Value;
 
         try
         {
+            // For timestamp/date columns, return ISO 8601 string
+            // This avoids Npgsql's DateTimeOffset wrapping issue entirely
+            if (pgType == "date" || pgType == "timestamp" || pgType == "timestamptz")
+            {
+                DateTime parsedDate;
+                if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out parsedDate))
+                {
+                    // Return as ISO 8601 date string (PostgreSQL parses this natively)
+                    return pgType == "date"
+                        ? parsedDate.ToString("yyyy-MM-dd")
+                        : parsedDate.ToString("yyyy-MM-ddTHH:mm:ss.000000Z");
+                }
+                if (DateTime.TryParse(str, out parsedDate))
+                {
+                    return pgType == "date"
+                        ? parsedDate.ToString("yyyy-MM-dd")
+                        : parsedDate.ToString("yyyy-MM-ddTHH:mm:ss.000000Z");
+                }
+                return DBNull.Value;
+            }
+
             switch (pgType)
             {
                 case "int2":
@@ -208,23 +194,6 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
                         return d;
                     return 0m;
 
-                case "date":
-                    if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.None, out DateTime d1))
-                        return DateTime.SpecifyKind(d1, DateTimeKind.Utc);
-                    if (DateTime.TryParse(str, out DateTime d2))
-                        return DateTime.SpecifyKind(d2, DateTimeKind.Utc);
-                    return DBNull.Value;
-
-                case "timestamp":
-                case "timestamptz":
-                    if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.None, out DateTime dt1))
-                        return DateTime.SpecifyKind(dt1, DateTimeKind.Utc);
-                    if (DateTime.TryParse(str, out DateTime dt2))
-                        return DateTime.SpecifyKind(dt2, DateTimeKind.Utc);
-                    return DBNull.Value;
-
                 case "bool":
                 case "boolean":
                     return str.Equals("T", StringComparison.OrdinalIgnoreCase) ||
@@ -238,6 +207,7 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
         }
         catch
         {
+            // Fallback: return as text with null bytes stripped
             return str.Replace("\0", "");
         }
     }
