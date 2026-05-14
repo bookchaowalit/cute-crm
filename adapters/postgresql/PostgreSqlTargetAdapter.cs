@@ -139,8 +139,9 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
                         npgsqlType = NpgsqlTypes.NpgsqlDbType.Boolean;
                 }
 
-                var param = cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
-                param.NpgsqlDbType = npgsqlType;
+                var param = new NpgsqlParameter($"@p{i}", npgsqlType);
+                param.Value = val ?? DBNull.Value;
+                cmd.Parameters.Add(param);
             }
 
             try
