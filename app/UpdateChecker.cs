@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 /// <summary>
 /// ตรวจสอบ version ใหม่จาก GitHub Releases

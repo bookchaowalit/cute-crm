@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 /// <summary>
 /// จัดการ Auto-start ผ่าน Windows Registry Run key
@@ -8,7 +8,7 @@ namespace ExpressETL;
 public static class AutoStartManager
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string AppName = "ExpressETL";
+    private const string AppName = "AccountingETL";
 
     /// <summary>
     /// เปิด auto-start — เพิ่ม entry ใน Registry Run

@@ -1,4 +1,4 @@
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 public partial class SettingsForm : Form
 {
@@ -473,9 +473,10 @@ public partial class SettingsForm : Form
         lblTestStatus.Text = "";
 
         var tempConfig = GetConfigFromFields();
-        var etl = new EtlService(tempConfig);
+        var target = new AccountingETL.Adapters.PostgreSQL.PostgreSqlTargetAdapter(
+            tempConfig.ConnectionString, "express_staging");
 
-        bool ok = await etl.TestConnectionAsync();
+        bool ok = await target.ValidateConnectionAsync();
 
         if (ok)
         {

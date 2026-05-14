@@ -1,9 +1,11 @@
 using System.Text;
+using AccountingETL.Core.Domain;
 
-namespace ExpressETL;
+namespace AccountingETL.Adapters.Express;
 
 /// <summary>
-/// อ่านไฟล์ .DBF (dBase/FoxPro format) โดยตรง ไม่ต้องใช้ library เพิ่มเติม
+/// Reads .DBF files (dBase/FoxPro format) directly without third-party libraries.
+/// Supports configurable encoding (default tis-620 for Thai).
 /// </summary>
 public class DbfReader
 {
@@ -18,14 +20,16 @@ public class DbfReader
         }
         catch
         {
-            // Fallback to tis-620 if specified encoding is invalid
             _encoding = Encoding.GetEncoding("tis-620");
         }
     }
 
-    public List<Dictionary<string, object>> Read(string filePath)
+    /// <summary>
+    /// Read all records from a DBF file.
+    /// </summary>
+    public List<Record> Read(string filePath)
     {
-        var results = new List<Dictionary<string, object>>();
+        var results = new List<Record>();
 
         using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var br = new BinaryReader(fs);
@@ -60,7 +64,6 @@ public class DbfReader
             byte fieldLength = br.ReadByte();
             byte decimalCount = br.ReadByte();
 
-            // ใช้ offset ที่คำนวณเอง (fieldOffsetVal ในบางไฟล์ไม่ถูกต้อง)
             fields.Add((fieldName, fieldOffset, fieldLength, decimalCount));
             fieldOffset += fieldLength;
 
@@ -75,14 +78,13 @@ public class DbfReader
             byte deletedFlag = br.ReadByte();
             if (deletedFlag == 0x2A) continue; // deleted record
 
-            var record = new Dictionary<string, object>();
+            var record = new Record();
             foreach (var (name, offset, length, dec) in fields)
             {
                 fs.Seek(headerSize + 1 + i * recordSize + offset, SeekOrigin.Begin);
                 byte[] valBytes = br.ReadBytes(length);
                 string valStr = _encoding.GetString(valBytes).TrimEnd('\0').Trim();
 
-                // Parse type
                 record[name] = ParseValue(valStr, dec);
             }
             results.Add(record);
@@ -91,7 +93,7 @@ public class DbfReader
         return results;
     }
 
-    private object ParseValue(string val, int decimalCount)
+    private static object? ParseValue(string val, int decimalCount)
     {
         if (string.IsNullOrWhiteSpace(val)) return "";
 

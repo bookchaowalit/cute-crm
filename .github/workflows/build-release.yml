@@ -4,35 +4,62 @@ on:
   push:
     branches: [ main ]
     tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
 
 env:
   DOTNET_VERSION: '8.0.x'
-  PROJECT_PATH: 'ExpressETL/ExpressETL.csproj'
-  OUTPUT_NAME: 'ExpressETL'
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  APP_PROJECT: 'app/AccountingETL.App.csproj'
+  OUTPUT_NAME: 'AccountingETL'
 
 jobs:
-  build:
+  # ============================================================
+  # 1. Build + Test (all platforms)
+  # ============================================================
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build (all non-Windows projects)
+        run: |
+          dotnet build core/AccountingETL.Core.csproj
+          dotnet build adapters/express/AccountingETL.Adapters.Express.csproj
+          dotnet build adapters/postgresql/AccountingETL.Adapters.PostgreSQL.csproj
+          dotnet build adapters/erpnext/AccountingETL.Adapters.ErpNext.csproj
+
+      - name: Run tests
+        run: dotnet test --no-build --verbosity normal
+
+  # ============================================================
+  # 2. Build Windows release
+  # ============================================================
+  build-windows:
     runs-on: windows-latest
     permissions:
       contents: write
-      packages: write
+    needs: test
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore ${{ env.PROJECT_PATH }}
+        run: dotnet restore ${{ env.APP_PROJECT }}
 
-      - name: Build & Publish (single file, self-contained)
+      - name: Publish single-file executable
         run: |
-          dotnet publish ${{ env.PROJECT_PATH }} `
+          dotnet publish ${{ env.APP_PROJECT }} `
             -c Release `
             -r win-x64 `
             --self-contained true `
@@ -47,38 +74,60 @@ jobs:
           $size = (Get-Item ./publish/${{ env.OUTPUT_NAME }}.exe).Length / 1MB
           Write-Output "File size: $([math]::Round($size, 2)) MB"
 
-      - name: Copy installer scripts
+      - name: Copy helper scripts
         run: |
-          copy ExpressETL\install.bat ./publish/
-          copy ExpressETL\uninstall.bat ./publish/
+          copy app\install.bat ./publish/
+          copy app\uninstall.bat ./publish/
 
-      - name: Create Release (on tag only)
+      - name: Upload artifact (for PR checks)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AccountingETL-windows
+          path: ./publish/${{ env.OUTPUT_NAME }}.exe
+          retention-days: 7
+
+      # ============================================================
+      # Release (only on tag push)
+      # ============================================================
+      - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             ./publish/${{ env.OUTPUT_NAME }}.exe
             ./publish/install.bat
             ./publish/uninstall.bat
           body: |
-            ## ExpressETL — ${{ github.ref_name }}
+            ## AccountingETL — ${{ github.ref_name }}
+
+            Hexagonal Architecture ETL for **any** accounting program.
 
             ### Download
-            - **ExpressETL.exe** — Single file, no installation needed
+            - **AccountingETL.exe** — Single file, no install needed (~15 MB)
 
-            ### Setup (first run)
-            1. Double-click `ExpressETL.exe`
-            2. Fill in PostgreSQL connection settings
+            ### Quick Start
+            1. Double-click `AccountingETL.exe`
+            2. Configure source path + PostgreSQL connection in Settings
             3. Click **Test Connection** → verify ✓
-            4. Click **Save & Close**
-            5. ETL runs automatically every X hours
+            4. Click **Save** — ETL runs automatically
+
+            ### Install as Windows Service
+            ```
+            AccountingETL.exe /install
+            AccountingETL.exe /uninstall
+            ```
 
             ### Requirements
             - Windows 10/11 (64-bit)
-            - PostgreSQL server accessible from this machine
-            - Express Accounting `.DBF` files in `C:\Program Files (x86)\ExpressD\dat`
+            - PostgreSQL server
+            - Accounting data files (DBF, CSV, etc.)
 
-            ### Database Schema
-            See [README.md](https://github.com/${{ github.repository }}/blob/main/ExpressETL/README.md) for PostgreSQL schema.
+            ### Built-in Adapters
+            | Source | Target |
+            |--------|--------|
+            | Express Accounting (DBF) | PostgreSQL (COPY) |
+            | | ERPNext (REST API) |
+
+            Read [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full docs.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

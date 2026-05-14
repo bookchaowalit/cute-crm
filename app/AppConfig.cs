@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Security.Cryptography;
 
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 public class AppConfig
 {

@@ -1,9 +1,17 @@
-namespace ExpressETL;
+using AccountingETL.Core.Domain;
+using AccountingETL.Core.Pipeline;
+using AccountingETL.Core.Ports;
+using AccountingETL.Adapters.Express;
+using AccountingETL.Adapters.PostgreSQL;
+using AccountingETL.Adapters.ErpNext;
+
+namespace AccountingETL.App;
 
 public partial class MainForm : Form
 {
     private AppConfig _config = null!;
-    private EtlService _etl = null!;
+    private IEtlPipeline _pipeline = null!;
+    private ITargetAdapter? _secondaryTarget = null;
     private System.Windows.Forms.Timer _schedulerTimer = null!;
     private bool _isRunning = false;
 
@@ -21,7 +29,6 @@ public partial class MainForm : Form
         {
             WindowState = FormWindowState.Minimized;
             Hide();
-            _minimizedToTray = true;
         }
     }
 
@@ -50,7 +57,6 @@ public partial class MainForm : Form
         Show();
         WindowState = FormWindowState.Normal;
         BringToFront();
-        _minimizedToTray = false;
         trayIcon.Visible = false;
     }
 
@@ -58,7 +64,6 @@ public partial class MainForm : Form
     {
         Hide();
         trayIcon.Visible = true;
-        _minimizedToTray = true;
     }
 
     private void ExitApp()
@@ -80,9 +85,7 @@ public partial class MainForm : Form
     private Button btnAbout = null!;
     private Button btnExit = null!;
     private ProgressBar progressBar = null!;
-    private System.Windows.Forms.Timer schedulerTimer = null!;
     private NotifyIcon trayIcon = null!;
-    private bool _minimizedToTray = false;
 
     private void InitializeComponent()
     {
@@ -251,8 +254,42 @@ public partial class MainForm : Form
     private void LoadConfig()
     {
         _config = AppConfig.Load();
-        _etl = new EtlService(_config);
-        _etl.OnLog += (s, msg) => AppendLog(msg);
+
+        // Build pipeline from config using adapters
+        var source = new ExpressSourceAdapter(_config.DbfPath, _config.DbfEncoding);
+        var target = new PostgreSqlTargetAdapter(_config.ConnectionString, "express_staging");
+
+        // Build field mapper from config
+        var mapper = new ExpressFieldMapper(_config.FieldMapping?.ToDictionary());
+
+        // Optional secondary target (ERPNext)
+        ITargetAdapter? secondaryTarget = null;
+        if (_config.SyncToErpNext && !string.IsNullOrWhiteSpace(_config.ErpNextUrl))
+        {
+            secondaryTarget = new ErpNextTargetAdapter(_config.ErpNextUrl, _config.ErpNextApiKey, _config.ErpNextApiSecret);
+        }
+
+        var pipelineConfig = new EtlConfig
+        {
+            SourcePath = _config.DbfPath,
+            SourceEncoding = _config.DbfEncoding,
+            TargetHost = _config.PgHost,
+            TargetPort = _config.PgPort,
+            TargetDatabase = _config.PgDb,
+            TargetUser = _config.PgUser,
+            TargetPassword = _config.PgPass,
+            TargetSchema = "express_staging",
+            IntervalHours = _config.IntervalHours,
+            LastSyncTime = _config.LastSyncTime,
+            LineNotifyToken = _config.LineToken,
+            NotifyOnSuccess = _config.NotifyOnSuccess,
+            NotifyOnFailure = _config.NotifyOnFailure,
+        };
+
+        _pipeline = new EtlPipeline(source, target, pipelineConfig, mapper, secondaryTarget);
+        _pipeline.Log += (msg) => AppendLog(msg);
+
+        _secondaryTarget = secondaryTarget;
     }
 
     private void UpdateStatusDisplay()
@@ -323,7 +360,20 @@ public partial class MainForm : Form
 
         try
         {
-            await _etl.RunAsync(progress);
+            await _pipeline.InitializeAsync();
+            var results = await _pipeline.RunAsync(progress: progress);
+
+            // LINE Notify on success
+            if (_config.NotifyOnSuccess && !string.IsNullOrWhiteSpace(_config.LineToken))
+            {
+                var summary = string.Join(" | ", results.Select(r => $"{r.Entity}: +{r.Counts.Inserted} ~{r.Counts.Updated}"));
+                await LineNotify.SendSuccessAsync(_config.LineToken, summary, (long)results.Sum(r => r.Duration.TotalMilliseconds));
+            }
+
+            // Update config
+            _config.LastSyncTime = DateTime.Now;
+            _config.Save();
+
             lblStatus.Text = "✓ ETL เสร็จสิ้น";
             lblStatus.ForeColor = Color.DarkGreen;
         }
@@ -332,6 +382,10 @@ public partial class MainForm : Form
             lblStatus.Text = $"✗ ผิดพลาด: {ex.Message}";
             lblStatus.ForeColor = Color.Red;
             AppendLog($"ERROR: {ex.Message}");
+
+            // LINE Notify on failure
+            if (_config.NotifyOnFailure && !string.IsNullOrWhiteSpace(_config.LineToken))
+                await LineNotify.SendErrorAsync(_config.LineToken, ex.Message);
         }
         finally
         {
@@ -372,11 +426,16 @@ public partial class MainForm : Form
 
             try
             {
-                await _etl.RunAsync();
+                await _pipeline.InitializeAsync();
+                await _pipeline.RunAsync();
+
+                _config.LastSyncTime = DateTime.Now;
+                _config.Save();
+
                 lblStatus.Text = "✓ Auto-sync เสร็จสิ้น";
                 lblStatus.ForeColor = Color.DarkGreen;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 lblStatus.Text = $"✗ Auto-sync ผิดพลาด";
                 lblStatus.ForeColor = Color.Red;

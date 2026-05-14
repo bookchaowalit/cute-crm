@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 /// <summary>
 /// เข้ารหัส/ถอดรหัสไฟล์ config.json ด้วย AES-256

@@ -1,6 +1,6 @@
 using Npgsql;
 
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 public partial class SyncHistoryForm : Form
 {

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 /// <summary>
 /// ส่งข้อความแจ้งเตือนผ่าน LINE Notify API

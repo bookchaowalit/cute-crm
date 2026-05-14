@@ -1,23 +1,27 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using AccountingETL.Core.Domain;
+using AccountingETL.Core.Pipeline;
+using AccountingETL.Core.Ports;
+using AccountingETL.Adapters.Express;
+using AccountingETL.Adapters.PostgreSQL;
+using AccountingETL.Adapters.ErpNext;
 
-namespace ExpressETL;
+namespace AccountingETL.App;
 
 /// <summary>
-/// Windows Service wrapper — รัน ETL เป็น Windows Service แท้จริง
-/// ใช้: ExpressETL.exe /service install   → ติดตั้ง service
-///      ExpressETL.exe /service uninstall → ลบ service
-///      ExpressETL.exe /service           → รันเป็น service
+/// Windows Service wrapper — runs ETL as a proper Windows Service.
+/// Uses the hexagonal architecture pipeline with pluggable adapters.
 /// </summary>
 public class EtlWindowsService : BackgroundService
 {
-    private readonly EtlService _etl;
+    private readonly IEtlPipeline _pipeline;
     private readonly AppConfig _config;
     private readonly System.Timers.Timer _timer;
 
-    public EtlWindowsService(EtlService etl, AppConfig config)
+    public EtlWindowsService(IEtlPipeline pipeline, AppConfig config)
     {
-        _etl = etl;
+        _pipeline = pipeline;
         _config = config;
         _timer = new System.Timers.Timer(config.IntervalHours * 60 * 60 * 1000);
         _timer.Elapsed += async (s, e) => await RunEtlAsync();
@@ -25,6 +29,9 @@ public class EtlWindowsService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Initialize schema
+        await _pipeline.InitializeAsync(stoppingToken);
+
         // Run once on startup
         await RunEtlAsync();
 
@@ -41,12 +48,16 @@ public class EtlWindowsService : BackgroundService
     {
         try
         {
-            await _etl.RunAsync();
+            await _pipeline.RunAsync(ct: CancellationToken.None);
+
+            // Update config
+            _config.LastSyncTime = DateTime.Now;
+            _config.Save();
         }
         catch (Exception ex)
         {
             // Log to Windows Event Log
-            System.Diagnostics.EventLog.WriteEntry("ExpressETL",
+            System.Diagnostics.EventLog.WriteEntry("AccountingETL",
                 $"ETL Error: {ex.Message}\n{ex.StackTrace}",
                 System.Diagnostics.EventLogEntryType.Error);
         }
@@ -64,7 +75,7 @@ public class EtlWindowsService : BackgroundService
 /// </summary>
 public static class ServiceManager
 {
-    public const string ServiceName = "ExpressETL";
+    public const string ServiceName = "AccountingETL";
 
     public static bool IsInstalled()
     {
@@ -87,7 +98,7 @@ public static class ServiceManager
         psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "sc.exe",
-            Arguments = $"description \"{ServiceName}\" \"Express Accounting to PostgreSQL ETL Service\"",
+            Arguments = $"description \"{ServiceName}\" \"Accounting ETL Service Service\"",
             Verb = "runas",
             UseShellExecute = true
         };
