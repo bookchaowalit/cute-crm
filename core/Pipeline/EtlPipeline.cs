@@ -54,6 +54,8 @@ public class EtlPipeline : IEtlPipeline
         _config = config;
         _mapper = mapper;
         _secondaryTarget = secondaryTarget;
+
+        _target.Log += LogMessage;
     }
 
     public async Task InitializeAsync(CancellationToken ct = default)
@@ -284,7 +286,6 @@ public class EtlPipeline : IEtlPipeline
 
             var msg = $"✓ {entityName}: +{counts.Inserted} ~{counts.Updated} ⏱{sw.ElapsedMilliseconds}ms";
             LogMessage(msg);
-            progress?.Report(msg);
 
             return new SyncResult(entity, counts, sw.Elapsed, status);
         }
@@ -343,7 +344,6 @@ public class EtlPipeline : IEtlPipeline
 
             var msg = $"✓ {table.TableName}: +{inserted} ⏱{sw.ElapsedMilliseconds}ms";
             LogMessage(msg);
-            progress?.Report(msg);
 
             return new SyncResult(EntityType.Customer, counts, sw.Elapsed, status);
         }

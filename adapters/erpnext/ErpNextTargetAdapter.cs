@@ -17,6 +17,8 @@ public class ErpNextTargetAdapter : ITargetAdapter
 
     public string TargetName => "ERPNext";
 
+    public event Action<string>? Log;
+
     public IReadOnlyList<EntityType> SupportedEntities { get; } = new[]
     {
         EntityType.Customer,

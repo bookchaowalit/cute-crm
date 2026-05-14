@@ -32,6 +32,8 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
 
     public bool SupportsAutoDiscovery => true;
 
+    public event Action<string>? Log;
+
     public PostgreSqlTargetAdapter(string connectionString, string schema = "etl_staging")
     {
         _connectionString = connectionString;
@@ -99,23 +101,27 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
 
         if (columns.Count == 0) return 0;
 
+        // Truncate before full re-sync so each run reflects the current source state
+        await using (var truncCmd = new NpgsqlCommand($"TRUNCATE \"{_schema}\".\"{tableName}\"", conn))
+            await truncCmd.ExecuteNonQueryAsync(ct);
+
         // Column names for INSERT
         var colNames = string.Join(", ", columns.Select(c => $"\"{c.Name}\""));
 
         int inserted = 0;
+        int failed = 0;
+        string? firstError = null;
 
         foreach (var record in recordsList)
         {
-            // Build raw SQL with inline values - bypasses Npgsql's parameter type inference entirely
-            // PostgreSQL handles all type conversion natively from text
             var values = columns.Select(c =>
             {
-                if (record.TryGetValue(c.Name, out var rawVal) && rawVal != null)
-                {
-                    var str = rawVal.ToString()?.Replace("\0", "").Replace("'", "''") ?? "";
-                    return $"'{str}'";
-                }
-                return "NULL";
+                if (!record.TryGetValue(c.Name, out var rawVal) || rawVal == null)
+                    return "NULL";
+                var str = rawVal.ToString()?.Replace("\0", "").Trim() ?? "";
+                if (string.IsNullOrEmpty(str))
+                    return "NULL";
+                return $"'{str.Replace("'", "''")}'";
             });
             var rowSql = $"INSERT INTO \"{_schema}\".\"{tableName}\" ({colNames}) VALUES ({string.Join(", ", values)})";
 
@@ -125,85 +131,17 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
                 await rowCmd.ExecuteNonQueryAsync(ct);
                 inserted++;
             }
-            catch
+            catch (Exception ex)
             {
-                // Per-row insert failed — skip this row but continue with others
+                failed++;
+                firstError ??= ex.Message;
             }
         }
+
+        if (failed > 0)
+            Log?.Invoke($"  ⚠ {tableName}: {failed}/{recordsList.Count} rows skipped — {firstError}");
 
         return inserted;
-    }
-
-    /// <summary>
-    /// Convert a raw DBF value to the correct .NET type for the PostgreSQL column.
-    /// For timestamp/date columns, returns ISO 8601 string to avoid Npgsql DateTimeOffset wrapping.
-    /// </summary>
-    private static object? ConvertValue(object? value, string pgType)
-    {
-        if (value == null) return DBNull.Value;
-
-        var str = value.ToString()?.Trim();
-        if (string.IsNullOrEmpty(str)) return DBNull.Value;
-
-        try
-        {
-            // For timestamp/date columns, return ISO 8601 string
-            // This avoids Npgsql's DateTimeOffset wrapping issue entirely
-            if (pgType == "date" || pgType == "timestamp" || pgType == "timestamptz")
-            {
-                DateTime parsedDate;
-                if (DateTime.TryParseExact(str, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.None, out parsedDate))
-                {
-                    // Return as ISO 8601 date string (PostgreSQL parses this natively)
-                    return pgType == "date"
-                        ? parsedDate.ToString("yyyy-MM-dd")
-                        : parsedDate.ToString("yyyy-MM-ddTHH:mm:ss.000000Z");
-                }
-                if (DateTime.TryParse(str, out parsedDate))
-                {
-                    return pgType == "date"
-                        ? parsedDate.ToString("yyyy-MM-dd")
-                        : parsedDate.ToString("yyyy-MM-ddTHH:mm:ss.000000Z");
-                }
-                return DBNull.Value;
-            }
-
-            switch (pgType)
-            {
-                case "int2":
-                case "int4":
-                case "int8":
-                case "bigint":
-                    if (int.TryParse(str, out int i)) return i;
-                    if (long.TryParse(str, out long l)) return l;
-                    return 0;
-
-                case "numeric":
-                case "decimal":
-                case "float4":
-                case "float8":
-                    if (decimal.TryParse(str, System.Globalization.NumberStyles.Any,
-                        System.Globalization.CultureInfo.InvariantCulture, out decimal d))
-                        return d;
-                    return 0m;
-
-                case "bool":
-                case "boolean":
-                    return str.Equals("T", StringComparison.OrdinalIgnoreCase) ||
-                           str.Equals("Y", StringComparison.OrdinalIgnoreCase) ||
-                           str.Equals("1", StringComparison.OrdinalIgnoreCase);
-
-                default:
-                    // text, varchar, etc. — strip null bytes
-                    return str.Replace("\0", "");
-            }
-        }
-        catch
-        {
-            // Fallback: return as text with null bytes stripped
-            return str.Replace("\0", "");
-        }
     }
 
     public async Task<ISet<string>> GetTableNamesAsync(CancellationToken ct = default)

@@ -17,6 +17,11 @@ public interface ITargetAdapter
     string TargetName { get; }
 
     /// <summary>
+    /// Fired by the adapter to emit warnings or diagnostic messages to the pipeline log.
+    /// </summary>
+    event Action<string>? Log;
+
+    /// <summary>
     /// Returns all supported entity types for this target.
     /// Empty list means this adapter does not support canonical mode.
     /// </summary>
