@@ -65,13 +65,26 @@ public class EtlService
         var filePath = Path.Combine(_config.DbfPath, "ARMAS.DBF");
         if (!File.Exists(filePath))
         {
-            Log($"⚠ ไม่พบไฟล์ {filePath} — ข้าม Customer");
+            var alts = new[] { "AR_MAS.DBF", "CUSTMAS.DBF", "CUSTOMER.DBF" };
+            foreach (var a in alts)
+            {
+                var p = Path.Combine(_config.DbfPath, a);
+                if (File.Exists(p)) { Log($"⚠ ARMAS.DBF ไม่พบ แต่พบ {a}"); filePath = p; break; }
+            }
+        }
+        if (!File.Exists(filePath))
+        {
+            Log($"⚠ ไม่พบ Customer file — ข้าม");
+            LogDbfFiles(_config.DbfPath);
             return;
         }
 
-        Log($"อ่าน ARMAS.DBF ...");
+        Log($"อ่าน {Path.GetFileName(filePath)} ...");
+        LogDbfStructure(filePath);
         var records = _dbfReader.Read(filePath);
         Log($"พบ Customer {records.Count} รายการ");
+        if (records.Count > 0)
+            Log($"Fields: {string.Join(", ", records[0].Keys.Take(5))}");
 
         int inserted = 0, updated = 0;
 
@@ -126,13 +139,25 @@ public class EtlService
         var filePath = Path.Combine(_config.DbfPath, "APMAS.DBF");
         if (!File.Exists(filePath))
         {
-            Log($"⚠ ไม่พบไฟล์ {filePath} — ข้าม Supplier");
+            var alts = new[] { "AP_MAS.DBF", "VENDMAS.DBF", "SUPPLIER.DBF" };
+            foreach (var a in alts)
+            {
+                var p = Path.Combine(_config.DbfPath, a);
+                if (File.Exists(p)) { Log($" APMAS.DBF ไม่พบ แต่พบ {a}"); filePath = p; break; }
+            }
+        }
+        if (!File.Exists(filePath))
+        {
+            Log($"⚠ ไม่พบ Supplier file — ข้าม");
             return;
         }
 
-        Log($"อ่าน APMAS.DBF ...");
+        Log($"อ่าน {Path.GetFileName(filePath)} ...");
+        LogDbfStructure(filePath);
         var records = _dbfReader.Read(filePath);
         Log($"พบ Supplier {records.Count} รายการ");
+        if (records.Count > 0)
+            Log($"Fields: {string.Join(", ", records[0].Keys.Take(5))}");
 
         int inserted = 0, updated = 0;
 
@@ -187,13 +212,25 @@ public class EtlService
         var filePath = Path.Combine(_config.DbfPath, "ICMAS.DBF");
         if (!File.Exists(filePath))
         {
-            Log($"⚠ ไม่พบไฟล์ {filePath} — ข้าม Item");
+            var alts = new[] { "IC_MAS.DBF", "ITEMMAS.DBF", "ITEMS.DBF" };
+            foreach (var a in alts)
+            {
+                var p = Path.Combine(_config.DbfPath, a);
+                if (File.Exists(p)) { Log($" ICMAS.DBF ไม่พบ แต่พบ {a}"); filePath = p; break; }
+            }
+        }
+        if (!File.Exists(filePath))
+        {
+            Log($"⚠ ไม่พบ Item file — ข้าม");
             return;
         }
 
-        Log($"อ่าน ICMAS.DBF ...");
+        Log($"อ่าน {Path.GetFileName(filePath)} ...");
+        LogDbfStructure(filePath);
         var records = _dbfReader.Read(filePath);
         Log($"พบ Item {records.Count} รายการ");
+        if (records.Count > 0)
+            Log($"Fields: {string.Join(", ", records[0].Keys.Take(5))}");
 
         int inserted = 0, updated = 0;
 
@@ -269,5 +306,42 @@ public class EtlService
         if (record.TryGetValue(key, out var val) && val is decimal d) return d;
         if (record.TryGetValue(key, out var i) && i is int n) return n;
         return 0;
+    }
+
+    // ===== Diagnostic helpers =====
+    private void LogDbfFiles(string dirPath)
+    {
+        if (!Directory.Exists(dirPath))
+        {
+            Log($"⚠ DBF path ไม่พบ: {dirPath}");
+            return;
+        }
+        var dbfFiles = Directory.GetFiles(dirPath, "*.DBF");
+        Log($"พบ .DBF files {dbfFiles.Length} ไฟล์:");
+        foreach (var f in dbfFiles.OrderBy(x => x))
+        {
+            Log($"  - {Path.GetFileName(f)} ({new FileInfo(f).Length / 1024} KB)");
+        }
+    }
+
+    private void LogDbfStructure(string filePath)
+    {
+        try
+        {
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var br = new BinaryReader(fs);
+
+            fs.Seek(0, SeekOrigin.Begin);
+            br.ReadByte(); // version
+            int recordCount = br.ReadInt32();
+            short headerSize = br.ReadInt16();
+            short recordSize = br.ReadInt16();
+
+            Log($"  DBF info: records={recordCount}, header={headerSize}, record_size={recordSize}");
+        }
+        catch (Exception ex)
+        {
+            Log($"  ⚠ Cannot read DBF header: {ex.Message}");
+        }
     }
 }
