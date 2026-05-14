@@ -145,6 +145,25 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
     {
         if (value == null) return DBNull.Value;
 
+        // Handle DateTime/DateTimeOffset objects directly
+        if (value is DateTime dtObj)
+        {
+            if (pgType == "date" || pgType == "timestamp" || pgType == "timestamptz")
+            {
+                return DateTime.SpecifyKind(dtObj, DateTimeKind.Utc);
+            }
+            return value;
+        }
+
+        if (value is DateTimeOffset dto)
+        {
+            if (pgType == "date" || pgType == "timestamp" || pgType == "timestamptz")
+            {
+                return DateTime.SpecifyKind(dto.UtcDateTime, DateTimeKind.Utc);
+            }
+            return value;
+        }
+
         var str = value.ToString()?.Trim();
         if (string.IsNullOrEmpty(str)) return DBNull.Value;
 
