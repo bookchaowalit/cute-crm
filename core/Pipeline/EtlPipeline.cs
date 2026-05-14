@@ -97,13 +97,44 @@ public class EtlPipeline : IEtlPipeline
 
         try
         {
-            if (IsAutoDiscoveryMode)
+            // Mode 1: Try canonical first
+            if (!IsAutoDiscoveryMode && !entity.HasValue)
             {
+                var canonicalResults = await RunCanonicalAsync(null, syncStartTime, progress, ct);
+
+                // Check if canonical found any data at all
+                var totalSynced = canonicalResults.Sum(r => r.Counts.Total);
+                if (totalSynced == 0 && _source.SupportsAutoDiscovery && _target.SupportsAutoDiscovery)
+                {
+                    LogMessage("Canonical mode found 0 records — falling back to Auto-Discovery mode...");
+
+                    // Discover tables and create them
+                    DiscoveredTables = await _source.DiscoverTablesAsync(ct);
+                    LogMessage($"Found {DiscoveredTables.Count} tables via auto-discovery.");
+
+                    foreach (var table in DiscoveredTables)
+                    {
+                        await _target.EnsureTableAsync(table, ct);
+                    }
+
+                    // Now sync via auto-discovery
+                    var autoResults = await RunAutoDiscoveryAsync(syncStartTime, progress, ct);
+                    results.AddRange(autoResults);
+                }
+                else
+                {
+                    results.AddRange(canonicalResults);
+                }
+            }
+            else if (IsAutoDiscoveryMode)
+            {
+                // Already in auto-discovery mode from Init
                 var autoResults = await RunAutoDiscoveryAsync(syncStartTime, progress, ct);
                 results.AddRange(autoResults);
             }
             else
             {
+                // User requested a specific entity → use canonical
                 var canonicalResults = await RunCanonicalAsync(entity, syncStartTime, progress, ct);
                 results.AddRange(canonicalResults);
             }
