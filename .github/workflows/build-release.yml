@@ -11,6 +11,7 @@ env:
   DOTNET_VERSION: '8.0.x'
   APP_PROJECT: 'app/AccountingETL.App.csproj'
   OUTPUT_NAME: 'AccountingETL'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   # ============================================================
@@ -42,7 +43,7 @@ jobs:
           dotnet build adapters/erpnext/AccountingETL.Adapters.ErpNext.csproj
 
       - name: Run tests
-        run: dotnet test tests/AccountingETL.Core.Tests/AccountingETL.Core.Tests.csproj --no-build --verbosity normal && dotnet test tests/AccountingETL.Adapters.Express.Tests/AccountingETL.Adapters.Express.Tests.csproj --no-build --verbosity normal
+        run: dotnet test tests/AccountingETL.Core.Tests/AccountingETL.Core.Tests.csproj --verbosity normal && dotnet test tests/AccountingETL.Adapters.Express.Tests/AccountingETL.Adapters.Express.Tests.csproj --verbosity normal
 
   # ============================================================
   # 2. Build Windows release
