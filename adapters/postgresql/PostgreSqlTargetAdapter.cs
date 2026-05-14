@@ -121,10 +121,10 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
                     val = rawVal.ToString()?.Replace("\0", "") ?? "";
                 }
 
-                // Explicitly create parameter with Text type - prevents Npgsql from wrapping DateTime as DateTimeOffset
-                var param = new NpgsqlParameter($"@p{i}", NpgsqlTypes.NpgsqlDbType.Text);
-                param.Value = val ?? DBNull.Value;
-                cmd.Parameters.Add(param);
+                // Use AddWithValue then override NpgsqlDbType - this forces Npgsql to use Text type
+                // even when the underlying .NET value is a DateTime/DateTimeOffset
+                cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
+                cmd.Parameters[i].NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text;
             }
 
             try
