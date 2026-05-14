@@ -16,6 +16,11 @@ public partial class SettingsForm : Form
     private Button btnSave = null!;
     private Button btnCancel = null!;
 
+    // LINE Notify fields
+    private TextBox txtLineToken = null!;
+    private CheckBox chkNotifySuccess = null!;
+    private CheckBox chkNotifyFailure = null!;
+
     public SettingsForm(AppConfig config)
     {
         _config = config;
@@ -26,7 +31,7 @@ public partial class SettingsForm : Form
     private void InitializeComponent()
     {
         this.Text = "ตั้งค่า ETL";
-        this.Size = new Size(460, 420);
+        this.Size = new Size(480, 520);
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
         this.MaximizeBox = false;
         this.MinimizeBox = false;
@@ -127,7 +132,55 @@ public partial class SettingsForm : Form
         };
         AddField("Interval (ชม.):", numInterval);
 
-        y += 10;
+        // LINE Notify section
+        y += 8;
+        var lineLabel = new Label
+        {
+            Text = " LINE Notify",
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            Location = new Point(leftMargin, y),
+            Size = new Size(420, 24),
+            AutoSize = false
+        };
+        this.Controls.Add(lineLabel);
+        y += 26;
+
+        var lblLineInfo = new Label
+        {
+            Text = "รับ LINE Token: https://notify-bot.line.me/my/",
+            Font = new Font("Segoe UI", 8),
+            ForeColor = Color.Gray,
+            Location = new Point(fieldX, y),
+            Size = new Size(fieldWidth + 40, 16),
+            AutoSize = false
+        };
+        this.Controls.Add(lblLineInfo);
+        y += 18;
+
+        txtLineToken = new TextBox { Text = _config.LineToken, UseSystemPasswordChar = true };
+        AddField("LINE Token:", txtLineToken);
+
+        chkNotifySuccess = new CheckBox
+        {
+            Text = "แจ้งเมื่อสำเร็จ (ทุก sync)",
+            Location = new Point(fieldX, y),
+            Size = new Size(fieldWidth, 22),
+            Checked = _config.NotifyOnSuccess,
+            AutoSize = false
+        };
+        this.Controls.Add(chkNotifySuccess);
+        y += 24;
+
+        chkNotifyFailure = new CheckBox
+        {
+            Text = "แจ้งเมื่อผิดพลาด (แนะนำ)",
+            Location = new Point(fieldX, y),
+            Size = new Size(fieldWidth, 22),
+            Checked = _config.NotifyOnFailure,
+            AutoSize = false
+        };
+        this.Controls.Add(chkNotifyFailure);
+        y += 12;
 
         // Test connection
         btnTest = new Button
@@ -219,6 +272,9 @@ public partial class SettingsForm : Form
         _config.PgUser = txtPgUser.Text.Trim();
         _config.PgPass = txtPgPass.Text;
         _config.IntervalHours = (int)numInterval.Value;
+        _config.LineToken = txtLineToken.Text.Trim();
+        _config.NotifyOnSuccess = chkNotifySuccess.Checked;
+        _config.NotifyOnFailure = chkNotifyFailure.Checked;
     }
 
     private AppConfig GetConfigFromFields()
@@ -231,7 +287,10 @@ public partial class SettingsForm : Form
             PgDb = txtPgDb.Text.Trim(),
             PgUser = txtPgUser.Text.Trim(),
             PgPass = txtPgPass.Text,
-            IntervalHours = (int)numInterval.Value
+            IntervalHours = (int)numInterval.Value,
+            LineToken = txtLineToken.Text.Trim(),
+            NotifyOnSuccess = chkNotifySuccess.Checked,
+            NotifyOnFailure = chkNotifyFailure.Checked
         };
     }
 }

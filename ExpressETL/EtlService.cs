@@ -23,19 +23,21 @@ public class EtlService
     public async Task RunAsync(IProgress<string>? progress = null)
     {
         var syncId = DateTime.Now;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         Log("====== ETL เริ่มทำงาน ======");
 
+        string summary = "";
         try
         {
             await using var conn = new NpgsqlConnection(_config.ConnectionString);
             await conn.OpenAsync();
 
-            // Ensure schema + sync_log table exists
             await EnsureSchemaAsync(conn);
             await LogSyncStartAsync(conn, syncId);
 
             var deltaSince = _config.LastSyncTime;
-            Log($"Delta sync: เฉพาะรายการที่เปลี่ยนแปลงหลัง {deltaSince:yyyy-MM-dd HH:mm:ss}");
+            if (deltaSince != DateTime.MinValue)
+                Log($"Delta sync: เฉพาะรายการที่เปลี่ยนแปลงหลัง {deltaSince:yyyy-MM-dd HH:mm:ss}");
 
             await SyncCustomersAsync(conn, syncId, progress);
             await SyncSuppliersAsync(conn, syncId, progress);
@@ -45,11 +47,23 @@ public class EtlService
             _config.LastSyncTime = syncId;
             _config.Save();
 
+            sw.Stop();
+            summary = $"Customer ✅ | Supplier ✅ | Item ✅ | ⏱{sw.ElapsedMilliseconds}ms";
             Log("====== ETL เสร็จสิ้น ======");
+
+            // LINE Notify on success
+            if (_config.NotifyOnSuccess && !string.IsNullOrWhiteSpace(_config.LineToken))
+                await LineNotify.SendSuccessAsync(_config.LineToken, summary, sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
+            sw.Stop();
             Log($"✗ ETL ผิดพลาด: {ex.Message}");
+
+            // LINE Notify on failure
+            if (_config.NotifyOnFailure && !string.IsNullOrWhiteSpace(_config.LineToken))
+                await LineNotify.SendErrorAsync(_config.LineToken, ex.Message);
+
             throw;
         }
     }

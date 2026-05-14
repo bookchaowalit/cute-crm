@@ -13,6 +13,11 @@ public class AppConfig
     public int IntervalHours { get; set; } = 1;
     public DateTime LastSyncTime { get; set; } = DateTime.MinValue;
 
+    // LINE Notify
+    public string LineToken { get; set; } = "";
+    public bool NotifyOnSuccess { get; set; } = false;
+    public bool NotifyOnFailure { get; set; } = true;
+
     private static string ConfigFilePath =>
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
 
