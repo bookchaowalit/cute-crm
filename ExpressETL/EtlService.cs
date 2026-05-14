@@ -42,13 +42,14 @@ public class EtlService
             await SyncCustomersAsync(conn, syncId, progress);
             await SyncSuppliersAsync(conn, syncId, progress);
             await SyncItemsAsync(conn, syncId, progress);
+            await SyncArInvoicesAsync(conn, syncId, progress);
 
             await LogSyncEndAsync(conn, syncId);
             _config.LastSyncTime = syncId;
             _config.Save();
 
             sw.Stop();
-            summary = $"Customer ✅ | Supplier ✅ | Item ✅ | ⏱{sw.ElapsedMilliseconds}ms";
+            summary = $"Customer ✅ | Supplier ✅ | Item ✅ | AR ✅ | {sw.ElapsedMilliseconds}ms";
             Log("====== ETL เสร็จสิ้น ======");
 
             // LINE Notify on success
@@ -513,8 +514,181 @@ public class EtlService
 
         sw.Stop();
         Log($"✓ Item: เพิ่ม {inserted}, อัปเดต {updated}, ข้าม {skipped} ({sw.ElapsedMilliseconds}ms)");
-        progress?.Report($"Item: +{inserted} ~{updated} ⏱{sw.ElapsedMilliseconds}ms");
+        progress?.Report($"Item: +{inserted} ~{updated} {sw.ElapsedMilliseconds}ms");
         await LogTableSyncAsync(conn, syncId, "items", inserted, updated, skipped, sw.ElapsedMilliseconds);
+    }
+
+    // ===== AR Invoices (ARTRN.DBF header + ARTRND.DBF detail) =====
+    private async Task SyncArInvoicesAsync(NpgsqlConnection conn, DateTime syncId, IProgress<string>? progress)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Find header file
+        var headerPath = FindDbfFile(_config.DbfPath, "ARTRN.DBF",
+            "AR_TRN.DBF", "ARINVH.DBF", "AR_INVH.DBF");
+        if (headerPath == null)
+        {
+            Log("⚠ ไม่พบ AR Invoice header file — ข้าม");
+            return;
+        }
+
+        // Find detail file
+        var detailPath = FindDbfFile(_config.DbfPath, "ARTRND.DBF",
+            "AR_TRND.DBF", "ARINVD.DBF", "AR_INVD.DBF");
+        if (detailPath == null)
+        {
+            Log("⚠ ไม่พบ AR Invoice detail file — ข้าม");
+            return;
+        }
+
+        Log($"อ่าน {Path.GetFileName(headerPath)} (header) + {Path.GetFileName(detailPath)} (detail) ...");
+        LogDbfStructure(headerPath);
+        LogDbfStructure(detailPath);
+
+        var headers = _dbfReader.Read(headerPath);
+        var details = _dbfReader.Read(detailPath);
+        Log($"พบ AR Invoice header {headers.Count} รายการ, detail {details.Count} รายการ");
+        if (headers.Count > 0)
+            Log($"Header Fields: {string.Join(", ", headers[0].Keys.Take(8))}");
+        if (details.Count > 0)
+            Log($"Detail Fields: {string.Join(", ", details[0].Keys.Take(8))}");
+
+        int insertedH = 0, updatedH = 0, skippedH = 0;
+
+        // Step 1: Get existing invoice numbers
+        var existingInvNos = new HashSet<string>();
+        await using (var chk = new NpgsqlCommand(
+            "SELECT inv_no FROM express_staging.ar_invoices", conn))
+        {
+            await using var reader = await chk.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                existingInvNos.Add(reader.GetString(0));
+        }
+
+        // Step 2: Batch insert new invoice headers
+        var newHeaders = headers.Where(r =>
+        {
+            var invNo = GetString(r, "INVNO");
+            return !string.IsNullOrWhiteSpace(invNo) && !existingInvNos.Contains(invNo);
+        }).ToList();
+
+        if (newHeaders.Count > 0)
+        {
+            await using var writer = await conn.BeginBinaryImportAsync("""
+                COPY express_staging.ar_invoices (inv_no, inv_date, cust_code, total_amt, vat_amt, net_amt, updated_at)
+                FROM STDIN (FORMAT BINARY)
+                """);
+
+            foreach (var r in newHeaders)
+            {
+                await writer.StartRowAsync();
+                await writer.WriteAsync(GetString(r, "INVNO"));
+                await writer.WriteAsync(ParseDate(r, "INVDATE"));
+                await writer.WriteAsync((object?)GetString(r, "CUSTCODE") ?? DBNull.Value);
+                await writer.WriteAsync(GetDecimal(r, "TOTALAMT"));
+                await writer.WriteAsync(GetDecimal(r, "VATAMT"));
+                await writer.WriteAsync(GetDecimal(r, "NETAMT"));
+                await writer.WriteAsync(DateTime.UtcNow);
+            }
+            await writer.CompleteAsync();
+            insertedH = newHeaders.Count;
+        }
+
+        // Step 3: Batch update existing headers via temp table
+        var existingHeaders = headers.Where(r =>
+        {
+            var invNo = GetString(r, "INVNO");
+            return !string.IsNullOrWhiteSpace(invNo) && existingInvNos.Contains(invNo);
+        }).ToList();
+
+        if (existingHeaders.Count > 0)
+        {
+            await using var cmd = new NpgsqlCommand("""
+                CREATE TEMP TABLE _arinv_upd (
+                    inv_no VARCHAR(30), inv_date DATE, cust_code VARCHAR(30),
+                    total_amt NUMERIC(15,2), vat_amt NUMERIC(15,2), net_amt NUMERIC(15,2)
+                ) ON COMMIT DROP;
+                """, conn);
+            await cmd.ExecuteNonQueryAsync();
+
+            await using var writer = await conn.BeginBinaryImportAsync("""
+                COPY _arinv_upd (inv_no, inv_date, cust_code, total_amt, vat_amt, net_amt)
+                FROM STDIN (FORMAT BINARY)
+                """);
+
+            foreach (var r in existingHeaders)
+            {
+                await writer.StartRowAsync();
+                await writer.WriteAsync(GetString(r, "INVNO"));
+                await writer.WriteAsync(ParseDate(r, "INVDATE"));
+                await writer.WriteAsync((object?)GetString(r, "CUSTCODE") ?? DBNull.Value);
+                await writer.WriteAsync(GetDecimal(r, "TOTALAMT"));
+                await writer.WriteAsync(GetDecimal(r, "VATAMT"));
+                await writer.WriteAsync(GetDecimal(r, "NETAMT"));
+            }
+            await writer.CompleteAsync();
+
+            await using var updCmd = new NpgsqlCommand("""
+                UPDATE express_staging.ar_invoices t SET
+                    inv_date = s.inv_date, cust_code = s.cust_code,
+                    total_amt = s.total_amt, vat_amt = s.vat_amt,
+                    net_amt = s.net_amt, updated_at = NOW()
+                FROM _arinv_upd s
+                WHERE t.inv_no = s.inv_no
+                """, conn);
+            updatedH = (int)await updCmd.ExecuteNonQueryAsync();
+        }
+
+        // Step 4: Replace detail lines for synced invoices
+        var syncedInvNos = newHeaders.Concat(existingHeaders)
+            .Select(r => GetString(r, "INVNO"))
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToList();
+
+        int detailInserted = 0;
+        if (syncedInvNos.Count > 0 && details.Count > 0)
+        {
+            // Delete old lines for synced invoices
+            var inClause = string.Join(",", syncedInvNos.Select((_, i) => $"@p{i}"));
+            await using var delCmd = new NpgsqlCommand(
+                $"DELETE FROM express_staging.ar_invoice_lines WHERE inv_no IN ({inClause})", conn);
+            for (int i = 0; i < syncedInvNos.Count; i++)
+                delCmd.Parameters.AddWithValue($"p{i}", syncedInvNos[i]);
+            await delCmd.ExecuteNonQueryAsync();
+
+            // Insert new lines via COPY
+            var relevantDetails = details.Where(r =>
+            {
+                var invNo = GetString(r, "INVNO");
+                return !string.IsNullOrWhiteSpace(invNo) && existingInvNos.Contains(invNo);
+            }).ToList();
+
+            if (relevantDetails.Count > 0)
+            {
+                await using var writer = await conn.BeginBinaryImportAsync("""
+                    COPY express_staging.ar_invoice_lines (inv_no, item_code, qty, unit_price, amount)
+                    FROM STDIN (FORMAT BINARY)
+                    """);
+
+                foreach (var r in relevantDetails)
+                {
+                    await writer.StartRowAsync();
+                    await writer.WriteAsync(GetString(r, "INVNO"));
+                    await writer.WriteAsync((object?)GetString(r, "ITEMCODE") ?? DBNull.Value);
+                    await writer.WriteAsync(GetDecimal(r, "QTY"));
+                    await writer.WriteAsync(GetDecimal(r, "UNITPRICE"));
+                    await writer.WriteAsync(GetDecimal(r, "AMOUNT"));
+                }
+                await writer.CompleteAsync();
+                detailInserted = relevantDetails.Count;
+            }
+        }
+
+        sw.Stop();
+        var totalH = insertedH + updatedH;
+        Log($"✓ AR Invoices: เพิ่ม {insertedH}, อัปเดต {updatedH}, detail {detailInserted} รายการ ({sw.ElapsedMilliseconds}ms)");
+        progress?.Report($"AR Inv: +{insertedH} ~{updatedH} detail:{detailInserted} ⏱{sw.ElapsedMilliseconds}ms");
+        await LogTableSyncAsync(conn, syncId, "ar_invoices", insertedH, updatedH, skippedH, sw.ElapsedMilliseconds);
     }
 
     // ===== Helpers =====
@@ -549,6 +723,25 @@ public class EtlService
         if (record.TryGetValue(key, out var val) && val is decimal d) return d;
         if (record.TryGetValue(key, out var i) && i is int n) return n;
         return 0;
+    }
+
+    /// <summary>
+    /// แปลงค่าจาก DBF เป็น DateTime (รองรับหลาย format)
+    /// </summary>
+    private static DateTime? ParseDate(Dictionary<string, object> record, string key)
+    {
+        if (!record.TryGetValue(key, out var val)) return null;
+        var s = val?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(s)) return null;
+
+        // Try various date formats
+        if (DateTime.TryParseExact(s, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d1)) return d1;
+        if (DateTime.TryParseExact(s, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d2)) return d2;
+        if (DateTime.TryParse(s, out var d3)) return d3;
+
+        return null;
     }
 
     private void LogDbfFiles(string dirPath)
