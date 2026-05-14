@@ -21,6 +21,10 @@ public partial class SettingsForm : Form
     private CheckBox chkNotifySuccess = null!;
     private CheckBox chkNotifyFailure = null!;
 
+    // Background mode fields
+    private CheckBox chkMinimizeToTray = null!;
+    private CheckBox chkAutoStart = null!;
+
     public SettingsForm(AppConfig config)
     {
         _config = config;
@@ -180,7 +184,41 @@ public partial class SettingsForm : Form
             AutoSize = false
         };
         this.Controls.Add(chkNotifyFailure);
-        y += 12;
+        y += 24;
+
+        // Background mode section
+        var bgLabel = new Label
+        {
+            Text = " Background Mode",
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            Location = new Point(leftMargin, y),
+            Size = new Size(420, 24),
+            AutoSize = false
+        };
+        this.Controls.Add(bgLabel);
+        y += 26;
+
+        chkMinimizeToTray = new CheckBox
+        {
+            Text = "Minimize to tray (ซ่อนใน system tray)",
+            Location = new Point(fieldX, y),
+            Size = new Size(fieldWidth, 22),
+            Checked = _config.MinimizeToTray,
+            AutoSize = false
+        };
+        this.Controls.Add(chkMinimizeToTray);
+        y += 24;
+
+        chkAutoStart = new CheckBox
+        {
+            Text = "Auto-start เมื่อเปิด Windows",
+            Location = new Point(fieldX, y),
+            Size = new Size(fieldWidth, 22),
+            Checked = _config.AutoStart,
+            AutoSize = false
+        };
+        this.Controls.Add(chkAutoStart);
+        y += 16;
 
         // Test connection
         btnTest = new Button
@@ -275,6 +313,12 @@ public partial class SettingsForm : Form
         _config.LineToken = txtLineToken.Text.Trim();
         _config.NotifyOnSuccess = chkNotifySuccess.Checked;
         _config.NotifyOnFailure = chkNotifyFailure.Checked;
+        _config.MinimizeToTray = chkMinimizeToTray.Checked;
+        _config.AutoStart = chkAutoStart.Checked;
+
+        // Apply auto-start immediately
+        if (_config.AutoStart) AutoStartManager.Enable();
+        else AutoStartManager.Disable();
     }
 
     private AppConfig GetConfigFromFields()
@@ -290,7 +334,9 @@ public partial class SettingsForm : Form
             IntervalHours = (int)numInterval.Value,
             LineToken = txtLineToken.Text.Trim(),
             NotifyOnSuccess = chkNotifySuccess.Checked,
-            NotifyOnFailure = chkNotifyFailure.Checked
+            NotifyOnFailure = chkNotifyFailure.Checked,
+            MinimizeToTray = chkMinimizeToTray.Checked,
+            AutoStart = chkAutoStart.Checked
         };
     }
 }

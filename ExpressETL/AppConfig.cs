@@ -19,6 +19,10 @@ public class AppConfig
     public bool NotifyOnSuccess { get; set; } = false;
     public bool NotifyOnFailure { get; set; } = true;
 
+    // Background mode
+    public bool MinimizeToTray { get; set; } = false;
+    public bool AutoStart { get; set; } = false;
+
     private static string ConfigFilePath =>
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
 

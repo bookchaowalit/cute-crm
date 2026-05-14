@@ -13,6 +13,59 @@ public partial class MainForm : Form
         LoadConfig();
         UpdateStatusDisplay();
         StartScheduler();
+        InitTrayIcon();
+
+        // Check if launched with /minimized flag
+        var args = Environment.GetCommandLineArgs();
+        if (args.Any(a => a.Equals("/minimized", StringComparison.OrdinalIgnoreCase)))
+        {
+            WindowState = FormWindowState.Minimized;
+            Hide();
+            _minimizedToTray = true;
+        }
+    }
+
+    private void InitTrayIcon()
+    {
+        trayIcon = new NotifyIcon
+        {
+            Icon = SystemIcons.Application,
+            Text = "Express ETL — Running",
+            Visible = false
+        };
+
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Open", null, (s, e) => ShowFromTray());
+        menu.Items.Add("Run Now", null, (s, e) => BtnRunNow_Click(null, EventArgs.Empty));
+        menu.Items.Add("Settings", null, (s, e) => BtnSettings_Click(null, EventArgs.Empty));
+        menu.Items.Add("-");
+        menu.Items.Add("Exit", null, (s, e) => ExitApp());
+        trayIcon.ContextMenuStrip = menu;
+
+        trayIcon.DoubleClick += (s, e) => ShowFromTray();
+    }
+
+    private void ShowFromTray()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        BringToFront();
+        _minimizedToTray = false;
+        trayIcon.Visible = false;
+    }
+
+    private void MinimizeToTray()
+    {
+        Hide();
+        trayIcon.Visible = true;
+        _minimizedToTray = true;
+    }
+
+    private void ExitApp()
+    {
+        trayIcon.Visible = false;
+        _schedulerTimer?.Stop();
+        Application.Exit();
     }
 
     // ===== Designer-generated controls (no .Designer.cs needed) =====
@@ -28,6 +81,8 @@ public partial class MainForm : Form
     private Button btnExit = null!;
     private ProgressBar progressBar = null!;
     private System.Windows.Forms.Timer schedulerTimer = null!;
+    private NotifyIcon trayIcon = null!;
+    private bool _minimizedToTray = false;
 
     private void InitializeComponent()
     {
@@ -446,12 +501,37 @@ public partial class MainForm : Form
 
     private void BtnExit_Click(object? sender, EventArgs e)
     {
-        Application.Exit();
+        ExitApp();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        // Minimize to tray instead of taskbar
+        if (_config.MinimizeToTray && WindowState == FormWindowState.Minimized)
+        {
+            MinimizeToTray();
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // If minimize-to-tray is enabled and user clicks X, hide instead of close
+        if (_config.MinimizeToTray && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            MinimizeToTray();
+            return;
+        }
+
+        trayIcon.Visible = false;
         _schedulerTimer?.Stop();
         base.OnFormClosing(e);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        trayIcon?.Dispose();
+        base.OnFormClosed(e);
     }
 }
