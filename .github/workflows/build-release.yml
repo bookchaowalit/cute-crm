@@ -9,6 +9,7 @@ env:
   DOTNET_VERSION: '8.0.x'
   PROJECT_PATH: 'ExpressETL/ExpressETL.csproj'
   OUTPUT_NAME: 'ExpressETL'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   build:

@@ -25,7 +25,7 @@ public partial class MainForm : Form
     private Button btnViewLog = null!;
     private Button btnExit = null!;
     private ProgressBar progressBar = null!;
-    private Timer statusTimer = null!;
+    private System.Windows.Forms.Timer schedulerTimer = null!;
 
     private void InitializeComponent()
     {
