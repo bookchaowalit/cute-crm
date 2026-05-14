@@ -77,26 +77,47 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
         var recordsList = records.ToList();
         if (recordsList.Count == 0) return 0;
 
-        // Get field names from first record
-        var fields = recordsList[0].Keys.ToArray();
-
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
 
-        await using var writer = conn.BeginBinaryImport(
-            $"COPY \"{_schema}\".\"{tableName}\" ({string.Join(",", fields.Select(f => $"\"{f}\""))}) FROM STDIN (FORMAT BINARY)");
+        // Get actual column order from table schema
+        var schemaSql = $"""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = @schema AND table_name = @table
+            ORDER BY ordinal_position
+            """;
+        var columns = new List<string>();
+        await using (var colCmd = new NpgsqlCommand(schemaSql, conn))
+        {
+            colCmd.Parameters.AddWithValue("schema", _schema);
+            colCmd.Parameters.AddWithValue("table", tableName);
+            await using var colReader = await colCmd.ExecuteReaderAsync(ct);
+            while (await colReader.ReadAsync(ct))
+                columns.Add(colReader.GetString(0));
+        }
+
+        if (columns.Count == 0) return 0;
+
+        // Use text-based COPY (more forgiving than binary for dynamic schemas)
+        var colList = string.Join(",", columns.Select(c => $"\"{c}\""));
+        using var writer = conn.BeginTextImport(
+            $"COPY \"{_schema}\".\"{tableName}\" ({colList}) FROM STDIN (FORMAT CSV, HEADER FALSE, QUOTE '\"', ESCAPE '\"')");
 
         foreach (var record in recordsList)
         {
-            await writer.StartRowAsync(ct);
-            foreach (var field in fields)
+            var values = columns.Select(c =>
             {
-                var val = record.TryGetValue(field, out var v) ? v : null;
-                await writer.WriteAsync(val, ct);
-            }
+                if (!record.TryGetValue(c, out var v) || v == null)
+                    return "";
+                var str = v.ToString()!;
+                // Escape CSV: double any existing quotes, wrap in quotes if contains comma/quote/newline
+                if (str.Contains('"') || str.Contains(',') || str.Contains('\n') || str.Contains('\r'))
+                    return "\"" + str.Replace("\"", "\"\"") + "\"";
+                return str;
+            });
+            writer.WriteLine(string.Join(",", values));
         }
 
-        await writer.CompleteAsync(ct);
         return recordsList.Count;
     }
 
