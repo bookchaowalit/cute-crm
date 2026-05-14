@@ -8,6 +8,18 @@ dist-info/
 build/
 dist/
 
+# .NET
+**/[Bb]in/
+**/[Oo]bj/
+*.dll
+*.exe
+*.pdb
+*.userosscache
+*.suo
+*.user
+*.log
+config.json
+
 # Virtual environments
 venv/
 .venv/

@@ -1,0 +1,79 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: 'ExpressETL/ExpressETL.csproj'
+  OUTPUT_NAME: 'ExpressETL'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.PROJECT_PATH }}
+
+      - name: Build & Publish (single file, self-contained)
+        run: |
+          dotnet publish ${{ env.PROJECT_PATH }} `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeAllContentForSelfExtract=true `
+            -p:PublishTrimmed=false `
+            -o ./publish
+
+      - name: Show build output
+        run: |
+          dir ./publish
+          $size = (Get-Item ./publish/${{ env.OUTPUT_NAME }}.exe).Length / 1MB
+          Write-Output "File size: $([math]::Round($size, 2)) MB"
+
+      - name: Upload artifact (every push)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExpressETL-exe
+          path: ./publish/${{ env.OUTPUT_NAME }}.exe
+          retention-days: 7
+
+      - name: Create Release (on tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./publish/${{ env.OUTPUT_NAME }}.exe
+          body: |
+            ## ExpressETL — ${{ github.ref_name }}
+
+            ### Download
+            - **ExpressETL.exe** — Single file, no installation needed
+
+            ### Setup (first run)
+            1. Double-click `ExpressETL.exe`
+            2. Fill in PostgreSQL connection settings
+            3. Click **Test Connection** → verify ✓
+            4. Click **Save & Close**
+            5. ETL runs automatically every X hours
+
+            ### Requirements
+            - Windows 10/11 (64-bit)
+            - PostgreSQL server accessible from this machine
+            - Express Accounting `.DBF` files in `C:\Program Files (x86)\ExpressD\dat`
+
+            ### Database Schema
+            See [README.md](https://github.com/${{ github.repository }}/blob/main/ExpressETL/README.md) for PostgreSQL schema.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
