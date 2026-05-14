@@ -99,37 +99,30 @@ public class PostgreSqlTargetAdapter : ITargetAdapter
 
         if (columns.Count == 0) return 0;
 
-        // Build INSERT statement - all values sent as text, PostgreSQL handles type conversion
+        // Column names for INSERT
         var colNames = string.Join(", ", columns.Select(c => $"\"{c.Name}\""));
-        var paramNames = string.Join(", ", columns.Select((_, i) => $"@p{i}"));
-        var insertSql = $"INSERT INTO \"{_schema}\".\"{tableName}\" ({colNames}) VALUES ({paramNames})";
 
         int inserted = 0;
-        await using var cmd = new NpgsqlCommand(insertSql, conn);
 
         foreach (var record in recordsList)
         {
-            cmd.Parameters.Clear();
-            for (int i = 0; i < columns.Count; i++)
+            // Build raw SQL with inline values - bypasses Npgsql's parameter type inference entirely
+            // PostgreSQL handles all type conversion natively from text
+            var values = columns.Select(c =>
             {
-                var (colName, pgType) = columns[i];
-                object? val = DBNull.Value;
-
-                if (record.TryGetValue(colName, out var rawVal) && rawVal != null)
+                if (record.TryGetValue(c.Name, out var rawVal) && rawVal != null)
                 {
-                    // Convert to string - PostgreSQL will parse it based on column type
-                    val = rawVal.ToString()?.Replace("\0", "") ?? "";
+                    var str = rawVal.ToString()?.Replace("\0", "").Replace("'", "''") ?? "";
+                    return $"'{str}'";
                 }
-
-                // Use AddWithValue then override NpgsqlDbType - this forces Npgsql to use Text type
-                // even when the underlying .NET value is a DateTime/DateTimeOffset
-                cmd.Parameters.AddWithValue($"@p{i}", val ?? DBNull.Value);
-                cmd.Parameters[i].NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text;
-            }
+                return "NULL";
+            });
+            var rowSql = $"INSERT INTO \"{_schema}\".\"{tableName}\" ({colNames}) VALUES ({string.Join(", ", values)})";
 
             try
             {
-                await cmd.ExecuteNonQueryAsync(ct);
+                await using var rowCmd = new NpgsqlCommand(rowSql, conn);
+                await rowCmd.ExecuteNonQueryAsync(ct);
                 inserted++;
             }
             catch
