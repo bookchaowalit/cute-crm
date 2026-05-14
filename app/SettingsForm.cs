@@ -47,17 +47,27 @@ public partial class SettingsForm : Form
     private void InitializeComponent()
     {
         this.Text = "ตั้งค่า ETL";
-        this.Size = new Size(560, 620);
-        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.Size = new Size(580, 700);
+        this.MinimumSize = new Size(520, 400);
+        this.FormBorderStyle = FormBorderStyle.Sizable;
         this.MaximizeBox = false;
         this.MinimizeBox = false;
         this.StartPosition = FormStartPosition.CenterParent;
         this.BackColor = Color.FromArgb(245, 245, 245);
 
+        // Scrollable content panel
+        var scrollPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            BackColor = Color.FromArgb(245, 245, 245)
+        };
+        this.Controls.Add(scrollPanel);
+
         int y = 15;
         int labelWidth = 100;
         int fieldX = 120;
-        int fieldWidth = 280;
+        int fieldWidth = 300;
         int rowHeight = 36;
         int leftMargin = 20;
 
@@ -71,10 +81,10 @@ public partial class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleRight,
                 AutoSize = false
             };
-            this.Controls.Add(lbl);
+            scrollPanel.Controls.Add(lbl);
             control.Location = new Point(fieldX, y);
             control.Size = new Size(fieldWidth, 28);
-            this.Controls.Add(control);
+            scrollPanel.Controls.Add(control);
             y += rowHeight;
         }
 
@@ -88,7 +98,7 @@ public partial class SettingsForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             AutoSize = false
         };
-        this.Controls.Add(title);
+        scrollPanel.Controls.Add(title);
         y += 35;
 
         // Fields
@@ -121,8 +131,8 @@ public partial class SettingsForm : Form
             TextAlign = ContentAlignment.MiddleRight,
             AutoSize = false
         };
-        this.Controls.Add(lblDbf);
-        this.Controls.Add(dbfPanel);
+        scrollPanel.Controls.Add(lblDbf);
+        scrollPanel.Controls.Add(dbfPanel);
         y += rowHeight;
 
         // DBF Encoding dropdown
@@ -186,7 +196,7 @@ public partial class SettingsForm : Form
             Size = new Size(420, 24),
             AutoSize = false
         };
-        this.Controls.Add(lineLabel);
+        scrollPanel.Controls.Add(lineLabel);
         y += 26;
 
         var lblLineInfo = new Label
@@ -198,7 +208,7 @@ public partial class SettingsForm : Form
             Size = new Size(fieldWidth + 40, 16),
             AutoSize = false
         };
-        this.Controls.Add(lblLineInfo);
+        scrollPanel.Controls.Add(lblLineInfo);
         y += 18;
 
         txtLineToken = new TextBox { Text = _config.LineToken, UseSystemPasswordChar = true };
@@ -212,7 +222,7 @@ public partial class SettingsForm : Form
             Checked = _config.NotifyOnSuccess,
             AutoSize = false
         };
-        this.Controls.Add(chkNotifySuccess);
+        scrollPanel.Controls.Add(chkNotifySuccess);
         y += 24;
 
         chkNotifyFailure = new CheckBox
@@ -223,7 +233,7 @@ public partial class SettingsForm : Form
             Checked = _config.NotifyOnFailure,
             AutoSize = false
         };
-        this.Controls.Add(chkNotifyFailure);
+        scrollPanel.Controls.Add(chkNotifyFailure);
         y += 24;
 
         // Background mode section
@@ -235,7 +245,7 @@ public partial class SettingsForm : Form
             Size = new Size(420, 24),
             AutoSize = false
         };
-        this.Controls.Add(bgLabel);
+        scrollPanel.Controls.Add(bgLabel);
         y += 26;
 
         chkMinimizeToTray = new CheckBox
@@ -246,7 +256,7 @@ public partial class SettingsForm : Form
             Checked = _config.MinimizeToTray,
             AutoSize = false
         };
-        this.Controls.Add(chkMinimizeToTray);
+        scrollPanel.Controls.Add(chkMinimizeToTray);
         y += 24;
 
         chkAutoStart = new CheckBox
@@ -257,7 +267,7 @@ public partial class SettingsForm : Form
             Checked = _config.AutoStart,
             AutoSize = false
         };
-        this.Controls.Add(chkAutoStart);
+        scrollPanel.Controls.Add(chkAutoStart);
         y += 24;
 
         var btnService = new Button
@@ -292,7 +302,7 @@ public partial class SettingsForm : Form
                 }
             }
         };
-        this.Controls.Add(btnService);
+        scrollPanel.Controls.Add(btnService);
         y += 36;
 
         // ERPNext Direct Sync section
@@ -304,7 +314,7 @@ public partial class SettingsForm : Form
             Size = new Size(420, 24),
             AutoSize = false
         };
-        this.Controls.Add(erpLabel);
+        scrollPanel.Controls.Add(erpLabel);
         y += 26;
 
         chkSyncToErpNext = new CheckBox
@@ -321,7 +331,7 @@ public partial class SettingsForm : Form
             txtErpApiKey.Enabled = chkSyncToErpNext.Checked;
             txtErpApiSecret.Enabled = chkSyncToErpNext.Checked;
         };
-        this.Controls.Add(chkSyncToErpNext);
+        scrollPanel.Controls.Add(chkSyncToErpNext);
         y += 24;
 
         txtErpUrl = new TextBox { Text = _config.ErpNextUrl, Enabled = _config.SyncToErpNext };
@@ -342,7 +352,7 @@ public partial class SettingsForm : Form
             Size = new Size(420, 24),
             AutoSize = false
         };
-        this.Controls.Add(fmLabel);
+        scrollPanel.Controls.Add(fmLabel);
         y += 26;
 
         var fmInfo = new Label
@@ -354,7 +364,7 @@ public partial class SettingsForm : Form
             Size = new Size(fieldWidth + 40, 16),
             AutoSize = false
         };
-        this.Controls.Add(fmInfo);
+        scrollPanel.Controls.Add(fmInfo);
         y += 18;
 
         var fm = _config.FieldMapping;
@@ -383,12 +393,12 @@ public partial class SettingsForm : Form
                 AutoSize = false,
                 Font = new Font("Segoe UI", 8)
             };
-            this.Controls.Add(lbl);
+            scrollPanel.Controls.Add(lbl);
 
             var txt = new TextBox { Text = value, Font = new Font("Consolas", 9) };
             txt.Location = new Point(130, y);
             txt.Size = new Size(120, 24);
-            this.Controls.Add(txt);
+            scrollPanel.Controls.Add(txt);
             txtFieldMappings[i] = txt;
 
             if (i % 2 == 0 && i + 1 < fmFields.Length)
@@ -403,12 +413,12 @@ public partial class SettingsForm : Form
                     AutoSize = false,
                     Font = new Font("Segoe UI", 8)
                 };
-                this.Controls.Add(lbl2);
+                scrollPanel.Controls.Add(lbl2);
 
                 var txt2 = new TextBox { Text = value2, Font = new Font("Consolas", 9) };
                 txt2.Location = new Point(380, y);
                 txt2.Size = new Size(120, 24);
-                this.Controls.Add(txt2);
+                scrollPanel.Controls.Add(txt2);
                 txtFieldMappings[i + 1] = txt2;
 
                 i++; // Skip next iteration
@@ -426,7 +436,7 @@ public partial class SettingsForm : Form
             Font = new Font("Segoe UI", 9)
         };
         btnTest.Click += BtnTest_Click;
-        this.Controls.Add(btnTest);
+        scrollPanel.Controls.Add(btnTest);
 
         lblTestStatus = new Label
         {
@@ -436,7 +446,7 @@ public partial class SettingsForm : Form
             Font = new Font("Segoe UI", 9),
             AutoSize = false
         };
-        this.Controls.Add(lblTestStatus);
+        scrollPanel.Controls.Add(lblTestStatus);
         y += 42;
 
         // Buttons
@@ -449,7 +459,7 @@ public partial class SettingsForm : Form
             DialogResult = DialogResult.OK
         };
         btnSave.Click += BtnSave_Click;
-        this.Controls.Add(btnSave);
+        scrollPanel.Controls.Add(btnSave);
 
         btnCancel = new Button
         {
@@ -458,7 +468,7 @@ public partial class SettingsForm : Form
             Size = new Size(100, 36),
             DialogResult = DialogResult.Cancel
         };
-        this.Controls.Add(btnCancel);
+        scrollPanel.Controls.Add(btnCancel);
     }
 
     private void LoadConfig()
